@@ -14,7 +14,11 @@ export interface ParityAllowlistEntry {
   reason: string;
 }
 
-export const VERSIONED_ALIAS_ALLOWLIST: string[] = ["GET /price"];
+export const VERSIONED_ALIAS_ALLOWLIST: string[] = [
+  "GET /price",
+  // /api/prices is hackathon-only and intentionally not mirrored under /api/v1.
+  "GET /prices",
+];
 
 export const PARITY_ALLOWLIST: ParityAllowlistEntry[] = [
   { method: "GET", path: "/", only: "main", reason: "Root welcome banner is production-only." },
@@ -26,20 +30,11 @@ export const PARITY_ALLOWLIST: ParityAllowlistEntry[] = [
   { method: "POST", path: "/api/auth/challenge", only: "main", reason: "Wallet auth flow is not part of the mock demo." },
   { method: "POST", path: "/api/auth/connect", only: "main", reason: "Wallet auth flow is not part of the mock demo." },
   { method: "POST", path: "/api/auth/verify", only: "main", reason: "Wallet auth flow is not part of the mock demo." },
-  { method: "GET", path: "/api/user/profile", only: "main", reason: "Authenticated user surface is production-only." },
-  { method: "PATCH", path: "/api/user/profile", only: "main", reason: "Authenticated user surface is production-only." },
-  { method: "GET", path: "/api/user/balance", only: "main", reason: "Authenticated user surface is production-only." },
-  { method: "GET", path: "/api/user/stats", only: "main", reason: "Authenticated user surface is production-only." },
-  { method: "GET", path: "/api/user/transactions", only: "main", reason: "Authenticated user surface is production-only." },
-  { method: "GET", path: "/api/user/:address/history", only: "main", reason: "Authenticated user surface is production-only." },
-  { method: "GET", path: "/api/user/:walletAddress/public-profile", only: "main", reason: "Public profile lookup is production-only." },
   { method: "GET", path: "/api/rounds/:id", only: "main", reason: "Round detail lookup is production-only." },
   { method: "GET", path: "/api/rounds/active", only: "main", reason: "Active-round lookup is production-only." },
   { method: "POST", path: "/api/rounds/start", only: "main", reason: "Admin round creation is production-only." },
   { method: "POST", path: "/api/rounds/:id/resolve", only: "main", reason: "Oracle round resolution is production-only." },
   { method: "POST", path: "/api/rounds/:id/simulate", only: "main", reason: "Round simulation is production-only." },
-  { method: "POST", path: "/api/bets/up-down", only: "main", reason: "Authenticated bet placement is production-only." },
-  { method: "POST", path: "/api/bets/precision", only: "main", reason: "Authenticated bet placement is production-only." },
   { method: "POST", path: "/api/predictions/submit", only: "main", reason: "Prediction submission is production-only." },
   { method: "POST", path: "/api/predictions/batch-submit", only: "main", reason: "Prediction submission is production-only." },
   { method: "GET", path: "/api/predictions/user", only: "main", reason: "Prediction history is production-only." },
@@ -47,17 +42,24 @@ export const PARITY_ALLOWLIST: ParityAllowlistEntry[] = [
   { method: "GET", path: "/api/education/guides", only: "main", reason: "Education content is production-only." },
   { method: "GET", path: "/api/education/tip", only: "main", reason: "Education content is production-only." },
   { method: "POST", path: "/api/leaderboard/batch", only: "main", reason: "Authenticated leaderboard batch lookup is production-only." },
-  { method: "GET", path: "/api/tournaments", only: "main", reason: "Tournaments surface is production-only." },
-  { method: "GET", path: "/api/tournaments/:id", only: "main", reason: "Tournaments surface is production-only." },
-  { method: "POST", path: "/api/tournaments/:id/join", only: "main", reason: "Tournaments surface is production-only." },
   { method: "GET", path: "/api/admin/metrics/rate-limits", only: "main", reason: "Admin surface is production-only." },
   { method: "POST", path: "/api/admin/metrics/rate-limits/clear", only: "main", reason: "Admin surface is production-only." },
+  // The admin-metrics router self-registers alias paths (/metrics, /admin/metrics/metrics,
+  // /rate-limit-summary, /admin/metrics/rate-limit-summary). When mounted at /api/admin/metrics
+  // these produce doubled-prefix routes. All are main-only admin endpoints.
+  { method: "GET", path: "/api/admin/metrics/metrics", only: "main", reason: "Prometheus scrape alias mounted inside admin-metrics router; production-only." },
+  { method: "GET", path: "/api/admin/metrics/rate-limit-summary", only: "main", reason: "Rate-limit summary alias mounted inside admin-metrics router; production-only." },
+  { method: "GET", path: "/api/admin/metrics/admin/metrics/metrics", only: "main", reason: "Double-prefixed alias produced by self-referential mount in admin-metrics.routes.ts; production-only." },
+  { method: "GET", path: "/api/admin/metrics/admin/metrics/rate-limit-summary", only: "main", reason: "Double-prefixed alias produced by self-referential mount in admin-metrics.routes.ts; production-only." },
   { method: "GET", path: "/api/admin/cors-diagnostics", only: "main", reason: "Admin surface is production-only." },
   { method: "GET", path: "/api/admin/dead-letter", only: "main", reason: "Admin surface is production-only." },
   { method: "POST", path: "/api/admin/dead-letter/retry-all", only: "main", reason: "Admin surface is production-only." },
   { method: "POST", path: "/api/admin/dead-letter/:id/retry", only: "main", reason: "Admin surface is production-only." },
+  // The main app mounts the health router at /health; the internal '/' handler resolves to /health/health.
+  // The hackathon app mounts health under /api, producing /api and /api/health.
+  { method: "GET", path: "/health/health", only: "main", reason: "Health router mounted at /health in main app; internal '/' handler resolves to /health/health." },
   { method: "GET", path: "/api", only: "hackathon", reason: "Hackathon app mounts the health router under /api instead of /health." },
-  { method: "GET", path: "/api/prices", only: "hackathon", reason: "Hackathon multi-asset mock price ticker; production serves /api/price." },
+  { method: "GET", path: "/api/health", only: "hackathon", reason: "Hackathon app mounts the health router under /api; main app mounts at /health." },
   { method: "GET", path: "/api/stats", only: "hackathon", reason: "Landing-page platform stats are hackathon-only." },
   { method: "GET", path: "/api/rounds", only: "hackathon", reason: "Hackathon mock rounds collection; production exposes /api/rounds/active and /api/rounds/:id." },
   { method: "POST", path: "/api/rounds/:id/bet", only: "hackathon", reason: "Hackathon mock bet stub." },

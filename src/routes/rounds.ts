@@ -5,7 +5,6 @@ import { sendSuccess } from '../utils/response';
 import { betSchema, upDownBetSchema, precisionBetSchema } from '../schemas/bets.schema';
 
 import { getRepositories } from '../repositories';
-import roundService from '../services/round.service';
 
 const router = Router();
 
@@ -37,23 +36,6 @@ router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const rounds = await getRepositories().rounds.listActiveRounds();
     return sendSuccess(res, rounds);
-    if (!config.app.roundsMockMode) {
-      try {
-        const onChainRound = await sorobanService.getActiveRound();
-        if (onChainRound) {
-          const mapped = mapSorobanActiveRound(onChainRound);
-          return sendSuccess(res, { source: 'soroban', rounds: [mapped] });
-        }
-      } catch (err) {
-        logger.warn('Soroban fetch failed; falling back to mock rounds', {
-          error: (err as Error).message,
-        });
-      }
-    }
-
-   // return sendSuccess(res, { source: 'mock', rounds: getMockRounds() });
-    const { source, rounds } = await roundService.getRoundsForApi();
-    return res.json({ source, rounds });
   } catch (err) {
     next(err);
   }
