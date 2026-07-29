@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { isValidStellarAddress } from '../utils/stellar-address.util';
+import { validateStellarAddressParam } from '../utils/stellar-address.util';
 import hackathonService from '../services/hackathon.service';
 
 const router = Router();
@@ -23,13 +23,9 @@ const router = Router();
  *       400:
  *         description: Invalid wallet address
  */
-router.get('/:address/stats', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/:address/stats', validateStellarAddressParam('address'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { address } = req.params;
-
-    if (!address || !isValidStellarAddress(address)) {
-      return res.status(400).json({ error: 'Invalid Stellar wallet address format' });
-    }
 
     // TODO: Wire to contract get_user_stats() and get_pending_winnings()
     const stats = await hackathonService.getUserStats(address);

@@ -23,8 +23,6 @@ export const VERSIONED_ALIAS_ALLOWLIST: string[] = [
 export const PARITY_ALLOWLIST: ParityAllowlistEntry[] = [
   { method: "GET", path: "/", only: "main", reason: "Root welcome banner is production-only." },
   { method: "GET", path: "/health", only: "main", reason: "Production health probe is mounted at /health; the hackathon app mounts it under /api." },
-  { method: "GET", path: "/metrics", only: "main", reason: "Prometheus metrics are production-only." },
-  { method: "GET", path: "/metrics/readiness", only: "main", reason: "Schema readiness probe is production-only." },
   { method: "GET", path: "/api/price", only: "main", reason: "Production single-asset XLM price endpoint; the hackathon app serves /api/prices instead." },
   { method: "GET", path: "/api/errors", only: "main", reason: "Production error catalog is not part of the mock demo." },
   { method: "POST", path: "/api/auth/challenge", only: "main", reason: "Wallet auth flow is not part of the mock demo." },

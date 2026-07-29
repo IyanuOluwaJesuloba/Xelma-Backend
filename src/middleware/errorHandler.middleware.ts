@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
-import { Prisma } from '@prisma/client';
+import {
+  PrismaClientKnownRequestError,
+  PrismaClientValidationError,
+} from '@prisma/client/runtime/library';
 import { AppError, ValidationError, ErrorCode } from '../utils/errors';
 import logger from '../utils/logger';
 
@@ -20,7 +23,7 @@ export interface ErrorResponse {
 /**
  * Maps a Prisma known-request error to an AppError.
  */
-function fromPrismaError(err: Prisma.PrismaClientKnownRequestError): AppError {
+function fromPrismaError(err: PrismaClientKnownRequestError): AppError {
   switch (err.code) {
     case 'P2025':
       // Record not found
@@ -59,7 +62,7 @@ export function errorHandler(
 
   if (err instanceof AppError) {
     appError = err;
-  } else if (err instanceof Prisma.PrismaClientKnownRequestError) {
+  } else if (err instanceof PrismaClientKnownRequestError) {
     appError = fromPrismaError(err);
   } else if (
     err instanceof SyntaxError &&
@@ -68,7 +71,7 @@ export function errorHandler(
     (err as any).type === 'entity.parse.failed'
   ) {
     appError = new ValidationError('Malformed JSON body');
-  } else if (err instanceof Prisma.PrismaClientValidationError) {
+  } else if (err instanceof PrismaClientValidationError) {
     appError = new ValidationError('Invalid database query parameters');
   } else if (err instanceof Error) {
     appError = new AppError(err.message || 'Internal Server Error', 500, ErrorCode.INTERNAL_SERVER_ERROR);

@@ -36,11 +36,23 @@ export function isValidStellarAddress(address: unknown): address is string {
   }
 }
 
-/** Reusable Zod schema for a required Stellar address field. */
-export const stellarAddressSchema = z
-  .string({ error: 'address is required' })
-  .min(1, 'address is required')
-  .refine(isValidStellarAddress, 'Invalid Stellar wallet address format');
+/**
+ * Factory that creates a Zod schema for a required Stellar address field
+ * with a customisable field name in the error message.
+ *
+ * @example
+ *   const schema = createStellarAddressSchema('walletAddress');
+ *   // => "walletAddress is required" instead of "address is required"
+ */
+export function createStellarAddressSchema(fieldName = 'address') {
+  return z
+    .string({ error: `${fieldName} is required` })
+    .min(1, `${fieldName} is required`)
+    .refine(isValidStellarAddress, 'Invalid Stellar wallet address format');
+}
+
+/** Reusable Zod schema for a required Stellar address field (field name: "address"). */
+export const stellarAddressSchema = createStellarAddressSchema('address');
 
 /** Reusable Zod schema for an optional Stellar address field. */
 export const optionalStellarAddressSchema = stellarAddressSchema.optional();

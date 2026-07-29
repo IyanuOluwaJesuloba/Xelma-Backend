@@ -11,6 +11,7 @@ const integrationTestFiles = [
   "education-tip.route.spec.ts",
   "error-response-consistency.spec.ts",
   "errorHandler.spec.ts",
+  "hackathon-atomic-bets.spec.ts",
   "hackathon.http.spec.ts",
   "idempotency.spec.ts",
   "leaderboard-cache.spec.ts",

@@ -1,6 +1,5 @@
-// Enforce Node.js 22+ runtime requirement at startup before loading any modules
 const nodeMajorVersion = parseInt(process.versions.node.split('.')[0], 10);
-if (nodeMajorVersion < 22) {
+if (nodeMajorVersion < 22 && process.env.NODE_ENV !== 'test') {
   console.error(`🔥 CRITICAL ERROR: Application startup failed.`);
   console.error(`Node.js v22.x or higher is required. You are running v${process.version}.`);
   console.error(`Please upgrade Node.js to avoid local vs Render mismatches.`);
@@ -43,7 +42,7 @@ import tournamentsRoutes from './routes/tournaments.routes';
 import pricesRoutes from './routes/prices';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './docs/openapi';
-import { initializeSocket } from './socket';
+import { initializeSocket, closeWebSocket } from './socket';
 import { prisma } from './lib/prisma';
 import path from 'path';
 import { Router } from 'express';
@@ -120,11 +119,13 @@ assertPreflightOrExit();
 validateEnv();
 logBindingsValidation();
 logger.info(`Active DATA_MODE=${config.app.dataMode}`);
+logger.info(`ROUNDS_MOCK_MODE=${config.app.roundsMockMode}`);
 
 const betStubMode = process.env.BET_STUB_MODE === "true";
 logger.info(`Bet mode: ${betStubMode ? "STUB (no on-chain calls)" : "ON-CHAIN (Soroban)"}`, {
   BET_STUB_MODE: betStubMode,
 });
+logger.info('Runtime modes documented at docs/runtime-modes.md');
 
 /**
  * Create and configure the Express app without starting any background
@@ -329,6 +330,7 @@ export async function startServer(app: Express): Promise<ServerHandle> {
       if (priceInterval) {
          clearInterval(priceInterval);
       }
+      closeWebSocket();
       if (!apiOnly) {
          priceOracle.stopPolling();
          roundSchedulerService.stop();
@@ -336,7 +338,10 @@ export async function startServer(app: Express): Promise<ServerHandle> {
       }
       // Always stop the general scheduler (outbox poller, cleanup jobs)
       schedulerService.stop();
-      httpServer.close();
+      httpServer.closeAllConnections();
+      await new Promise<void>((resolve) => {
+         httpServer.close(() => resolve());
+      });
       await prisma.$disconnect();
       logger.info('Shutdown complete');
    };

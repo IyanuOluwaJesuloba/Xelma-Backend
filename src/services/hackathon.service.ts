@@ -76,48 +76,58 @@ export class HackathonService {
   }
 
   async placeBet(roundId: string, address: string, amount: number, side?: 'UP' | 'DOWN', predictedPrice?: number) {
-    // 1. Ensure user exists
-    await this.getUserStats(address);
+    await db.transaction(async (tx) => {
+      const existing = await tx.select().from(hackathonUsers).where(eq(hackathonUsers.address, address));
+      if (existing.length === 0) {
+        await tx.insert(hackathonUsers).values({
+          address,
+          balance: 1000,
+          pendingWinnings: 0,
+          totalWins: 3,
+          totalLosses: 1,
+          currentStreak: 3,
+          xp: 410,
+          rankTitle: 'Rookie',
+        });
+      }
 
-    // 2. Insert bet
-    await db.insert(hackathonBets).values({
-      roundId,
-      address,
-      amount,
-      side,
-      predictedPrice,
-    });
+      await tx.insert(hackathonBets).values({
+        roundId,
+        address,
+        amount,
+        side,
+        predictedPrice,
+      });
 
-    // 3. Update user balance
-    const users = await db.select().from(hackathonUsers).where(eq(hackathonUsers.address, address));
-    if (users.length > 0) {
-      const newBalance = Math.max(0, users[0].balance - amount);
-      await db.update(hackathonUsers).set({ balance: newBalance }).where(eq(hackathonUsers.address, address));
-    }
+      const users = await tx.select().from(hackathonUsers).where(eq(hackathonUsers.address, address));
+      if (users.length > 0) {
+        const newBalance = Math.max(0, users[0].balance - amount);
+        await tx.update(hackathonUsers).set({ balance: newBalance }).where(eq(hackathonUsers.address, address));
+      }
 
-    // 4. Update round pool
-    const rounds = await db.select().from(hackathonRounds).where(eq(hackathonRounds.id, roundId));
-    if (rounds.length > 0) {
-      const round = rounds[0];
-      if (round.mode === 'updown' && side) {
-        if (side === 'UP') {
-          await db.update(hackathonRounds)
-            .set({ poolUp: round.poolUp + amount })
-            .where(eq(hackathonRounds.id, roundId));
-        } else {
-          await db.update(hackathonRounds)
-            .set({ poolDown: round.poolDown + amount })
+      const rounds = await tx.select().from(hackathonRounds).where(eq(hackathonRounds.id, roundId));
+      if (rounds.length > 0) {
+        const round = rounds[0];
+        if (round.mode === 'updown' && side) {
+          if (side === 'UP') {
+            await tx.update(hackathonRounds)
+              .set({ poolUp: round.poolUp + amount })
+              .where(eq(hackathonRounds.id, roundId));
+          } else {
+            await tx.update(hackathonRounds)
+              .set({ poolDown: round.poolDown + amount })
+              .where(eq(hackathonRounds.id, roundId));
+          }
+        } else if (round.mode === 'precision') {
+          await tx.update(hackathonRounds)
+            .set({
+              totalPool: round.totalPool + amount,
+              predictionCount: round.predictionCount + 1,
+            })
             .where(eq(hackathonRounds.id, roundId));
         }
-      } else if (round.mode === 'precision') {
-        await db.update(hackathonRounds)
-          .set({
-            totalPool: round.totalPool + amount,
-            predictionCount: round.predictionCount + 1,
-          })
-          .where(eq(hackathonRounds.id, roundId));
       }
-    }
+    });
   }
 }
 

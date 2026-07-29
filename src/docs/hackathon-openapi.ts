@@ -150,6 +150,7 @@ export const hackathonSwaggerSpec = swaggerJSDoc({
       { name: 'rounds', description: 'Mock prediction rounds' },
       { name: 'leaderboard', description: 'Mock leaderboard data' },
       { name: 'tournaments', description: 'Tournament listings and join' },
+      { name: 'observability', description: 'Prometheus metrics and readiness probes' },
     ],
   },
   apis: [

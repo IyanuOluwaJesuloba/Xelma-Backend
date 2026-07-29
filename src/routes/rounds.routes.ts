@@ -409,9 +409,14 @@ router.post('/:id/simulate', async (req: Request, res: Response, next: NextFunct
         
         res.json({
             success: true,
-            roundId: id,
-            simulatedPrice: finalPrice,
-            ...result
+            roundId: result.roundId,
+            simulatedPrice: result.simulatedPrice,
+            mode: result.mode,
+            startPrice: result.startPrice,
+            winningSide: result.winningSide,
+            winningRange: result.winningRange,
+            predictions: result.predictions,
+            summary: result.summary,
         });
     } catch (error) {
         next(error);

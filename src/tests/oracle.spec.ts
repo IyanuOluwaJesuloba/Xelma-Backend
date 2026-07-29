@@ -20,7 +20,7 @@ jest.mock('../config', () => {
   };
 });
 
-// Re-import the singleton after mocks are wired up.
+import axios from 'axios';
 import priceOracle from '../services/oracle';
 
 function resetOracle() {

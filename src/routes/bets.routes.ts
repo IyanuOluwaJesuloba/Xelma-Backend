@@ -9,7 +9,7 @@ import {
   storeIdempotencyResult,
   isValidIdempotencyKey,
 } from "../utils/idempotency.util";
-import { ConflictError, ValidationError, ErrorCode } from "../utils/errors";
+import { ConflictError, ValidationError, ErrorCode, ExternalServiceError } from "../utils/errors";
 
 const router = Router();
 
@@ -44,7 +44,7 @@ router.post(
   "/up-down",
   verifyStellarAuth,
   validate(upDownBetSchema),
-  (async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  async (req: any, res: Response, next: NextFunction) => {
     const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
     const userId = req.user.userId;
     const endpoint = "/api/bets/up-down";
@@ -108,11 +108,10 @@ router.post(
         await releaseIdempotencyLock(userId, endpoint, idempotencyKey);
       }
 
-      if (error?.message?.includes("Soroban") || error?.message?.includes("Circuit breaker")) {
-        res.status(503).json({ success: false, error: "Contract interaction failed. Please try again." });
-      } else {
-        next(error);
+      if (error?.message?.includes("Circuit breaker")) {
+        return next(new ExternalServiceError("Contract interaction failed. Please try again.", ErrorCode.EXTERNAL_SERVICE_ERROR));
       }
+      next(error);
     }
   }) as any,
 );
@@ -148,7 +147,7 @@ router.post(
   "/precision",
   verifyStellarAuth,
   validate(precisionBetSchema),
-  (async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  async (req: any, res: Response, next: NextFunction) => {
     const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
     const userId = req.user.userId;
     const endpoint = "/api/bets/precision";
@@ -212,11 +211,10 @@ router.post(
         await releaseIdempotencyLock(userId, endpoint, idempotencyKey);
       }
 
-      if (error?.message?.includes("Soroban") || error?.message?.includes("Circuit breaker")) {
-        res.status(503).json({ success: false, error: "Contract interaction failed. Please try again." });
-      } else {
-        next(error);
+      if (error?.message?.includes("Circuit breaker")) {
+        return next(new ExternalServiceError("Contract interaction failed. Please try again.", ErrorCode.EXTERNAL_SERVICE_ERROR));
       }
+      next(error);
     }
   }) as any,
 );

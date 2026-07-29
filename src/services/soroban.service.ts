@@ -5,6 +5,7 @@ import { toDecimal } from "../utils/decimal.util";
 import { withTimeout, TimeoutResult } from "../utils/timeout-wrapper";
 import { CircuitBreaker, CircuitBreakerOpenError } from "../utils/circuit-breaker";
 import { Decimal } from "@prisma/client/runtime/library";
+import { mapSorobanError } from "../utils/errors";
 
 export interface SorobanHealth {
   initialized: boolean;
@@ -215,7 +216,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Soroban round created successfully", {
@@ -274,7 +275,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Bet placed successfully on Soroban", {
@@ -332,7 +333,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Precision bet placed successfully on Soroban", {
@@ -389,7 +390,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Soroban round resolved successfully", {
@@ -464,7 +465,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Initial tokens minted successfully", {

@@ -41,3 +41,10 @@ npm run build          # compile to dist/
 
 The pull request template is applied automatically to new PRs from
 [.github/pull_request_template.md](.github/pull_request_template.md).
+
+## Runtime modes
+
+Before opening a PR, verify your change works under the appropriate runtime
+mode flags. The authoritative matrix of `DATA_MODE`, `BET_STUB_MODE`,
+`ROUNDS_MOCK_MODE`, and their interactions lives in
+**[docs/runtime-modes.md](docs/runtime-modes.md)**.
