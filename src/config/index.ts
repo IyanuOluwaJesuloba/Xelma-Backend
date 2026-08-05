@@ -1,5 +1,7 @@
 import dotenv from "dotenv";
 import { createValidator, ConfigValidationError } from "./validation";
+import { resolveSorobanEnvVars } from "./env";
+import logger from "../utils/logger";
 
 dotenv.config();
 
@@ -40,6 +42,12 @@ export interface SorobanConfig {
   rpcUrl: string;
   adminSecret: string;
   oracleSecret: string;
+  /**
+   * When true, money paths (bet/resolve) abort if Soroban chain verification
+   * fails. When false (default), demos may proceed with DB-only fallback.
+   * Production should set SOROBAN_FAIL_CLOSED=true.
+   */
+  failClosed: boolean;
 }
 
 export interface SchedulerConfig {
@@ -118,8 +126,12 @@ function buildConfig(): Config {
     expiry: v.optional(env.JWT_EXPIRY, "7d"),
   };
 
+  const isMockMode = env.DATA_MODE === "mock";
+
   const database: DatabaseConfig = {
-    url: v.required(env.DATABASE_URL, "DATABASE_URL"),
+    url: isMockMode
+      ? v.optional(env.DATABASE_URL, "postgresql://mock:mock@localhost:5432/mock")
+      : v.required(env.DATABASE_URL, "DATABASE_URL"),
     connectionLimit: v.positiveInt(env.DB_CONNECTION_LIMIT, "DB_CONNECTION_LIMIT", 10),
     poolTimeoutSeconds: v.positiveInt(
       env.DB_POOL_TIMEOUT_SECONDS,
@@ -142,50 +154,58 @@ function buildConfig(): Config {
 
   // Merge pool/timeout settings into the connection string as Prisma/pg expects.
   // If DATABASE_URL already includes any of these params, explicit env vars win.
-  try {
-    const url = new URL(database.url);
+  // Skip URL merging in mock mode when no real database is used.
+  if (!isMockMode || env.DATABASE_URL) {
+    try {
+      const url = new URL(database.url);
 
-    const setParam = (key: string, value: string) => {
-      url.searchParams.set(key, value);
-    };
+      const setParam = (key: string, value: string) => {
+        url.searchParams.set(key, value);
+      };
 
-    setParam("connection_limit", String(database.connectionLimit));
-    setParam("pool_timeout", String(database.poolTimeoutSeconds));
-    setParam("connect_timeout", String(database.connectTimeoutSeconds));
-    if (database.statementTimeoutMs > 0) {
-      setParam("statement_timeout", String(database.statementTimeoutMs));
-    } else {
-      url.searchParams.delete("statement_timeout");
+      setParam("connection_limit", String(database.connectionLimit));
+      setParam("pool_timeout", String(database.poolTimeoutSeconds));
+      setParam("connect_timeout", String(database.connectTimeoutSeconds));
+      if (database.statementTimeoutMs > 0) {
+        setParam("statement_timeout", String(database.statementTimeoutMs));
+      } else {
+        url.searchParams.delete("statement_timeout");
+      }
+      if (database.pgbouncer) {
+        setParam("pgbouncer", "true");
+      } else {
+        url.searchParams.delete("pgbouncer");
+      }
+
+      database.url = url.toString();
+    } catch {
+      // Keep existing validator behavior: DATABASE_URL required but not strongly URL-validated here.
+      // Prisma will surface a clear error if the URL is malformed.
     }
-    if (database.pgbouncer) {
-      setParam("pgbouncer", "true");
-    } else {
-      url.searchParams.delete("pgbouncer");
-    }
-
-    database.url = url.toString();
-  } catch {
-    // Keep existing validator behavior: DATABASE_URL required but not strongly URL-validated here.
-    // Prisma will surface a clear error if the URL is malformed.
   }
 
+  // Prefer SOROBAN_* canonically; accept CONTRACT_ID / STELLAR_RPC_URL aliases (#404).
+  const sorobanEnv = resolveSorobanEnvVars(env);
+
   const sorobanNetwork = v.oneOf(
-    env.SOROBAN_NETWORK,
+    sorobanEnv.network,
     "SOROBAN_NETWORK",
     ["testnet", "mainnet"] as const,
     "testnet",
   );
 
   const soroban: SorobanConfig = {
-    contractId: v.optional(env.SOROBAN_CONTRACT_ID, ""),
+    contractId: v.optional(sorobanEnv.contractId.value, ""),
     network: sorobanNetwork,
     rpcUrl: v.url(
-      env.SOROBAN_RPC_URL,
-      "SOROBAN_RPC_URL",
+      sorobanEnv.rpcUrl.value,
+      sorobanEnv.rpcUrl.source ?? "SOROBAN_RPC_URL",
       "https://soroban-testnet.stellar.org",
     ),
-    adminSecret: v.optional(env.SOROBAN_ADMIN_SECRET, ""),
-    oracleSecret: v.optional(env.SOROBAN_ORACLE_SECRET, ""),
+    adminSecret: v.optional(sorobanEnv.adminSecret, ""),
+    oracleSecret: v.optional(sorobanEnv.oracleSecret, ""),
+    // Default fail-open for local/demo; production should set true.
+    failClosed: v.boolean(env.SOROBAN_FAIL_CLOSED, false),
   };
 
   const scheduler: SchedulerConfig = {
@@ -281,7 +301,9 @@ try {
     const isTestEnv =
       process.env.NODE_ENV === "test" || Boolean(process.env.JEST_WORKER_ID);
     if (!isTestEnv) {
-      console.error(`\n${err.message}\n`);
+      logger.error("Config validation failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       process.exit(1);
     }
     throw err;

@@ -20,6 +20,26 @@ if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = DUMMY_DB_URL;
 }
 
+// Soroban fixture defaults — used by src/tests/soroban-fixture.spec.ts.
+// These must be set BEFORE any module loads because SorobanService is a
+// singleton whose constructor calls init() during its module import.
+// Override via .env.test or shell to use real testnet credentials.
+if (!process.env.SOROBAN_CONTRACT_ID) {
+  process.env.SOROBAN_CONTRACT_ID = 'CCJZ5DGZBW5JRZYPZ6J6V3JZ5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z5Z';
+}
+if (!process.env.SOROBAN_NETWORK) {
+  process.env.SOROBAN_NETWORK = 'testnet';
+}
+if (!process.env.SOROBAN_RPC_URL) {
+  process.env.SOROBAN_RPC_URL = 'https://soroban-testnet.stellar.org';
+}
+if (!process.env.SOROBAN_ADMIN_SECRET) {
+  process.env.SOROBAN_ADMIN_SECRET = 'SBJDSFHKJDFHKJDSHFKJDSHFKJDSHFKJDSHFKJDSHFKJDSHFKJDSHFKJDSHF';
+}
+if (!process.env.SOROBAN_ORACLE_SECRET) {
+  process.env.SOROBAN_ORACLE_SECRET = 'SABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDE';
+}
+
 // Global helper to check if a real DB is available
 global.hasDb = Boolean(
   process.env.DATABASE_URL && 

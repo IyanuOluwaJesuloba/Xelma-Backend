@@ -1,16 +1,42 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import roundService from '../services/round.service';
 import resolutionService from '../services/resolution.service';
+import simulationService from '../services/simulation.service';
 import { requireAdmin, requireOracle, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { asyncHandler } from '../middleware/errorHandler.middleware';
 import { toDecimal, toDecimalString } from '../utils/decimal.util';
 import { adminRoundRateLimiter, oracleResolveRateLimiter } from '../middleware/rateLimiter.middleware';
 import { validate } from '../middleware/validate.middleware';
+import { sendSuccess } from '../utils/response';
 import { startRoundSchema, resolveRoundSchema } from '../schemas/rounds.schema';
+import { betSchema, upDownBetSchema, precisionBetSchema } from '../schemas/bets.schema';
+import { toDecimal, toDecimalString } from '../utils/decimal.util';
 import { NotFoundError } from '../utils/errors';
+import { getRepositories } from '../repositories';
 import config from '../config';
-import simulationService from '../services/simulation.service';
 
 const router = Router();
+
+/**
+ * @openapi
+ * /api/rounds:
+ *   get:
+ *     summary: List active prediction rounds
+ *     description: Returns active rounds. Delegates to shared round service with Soroban → Database → Mock fallback.
+ *     tags:
+ *       - rounds
+ *     responses:
+ *       200:
+ *         description: Active rounds with source metadata
+ */
+router.get('/', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { source, rounds } = await roundService.getRoundsForApi();
+    sendSuccess(res, { source, rounds });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * @swagger
@@ -40,7 +66,7 @@ const router = Router();
  *                 description: Duration in seconds (must be > 0)
  *               priceRanges:
  *                 type: array
- *                 description: Optional LEGENDS-only custom ranges; if omitted, default ranges are generated from startPrice.
+ *                 description: Optional LEGENDS-only custom ranges
  *                 items:
  *                   type: object
  *                   properties:
@@ -48,123 +74,54 @@ const router = Router();
  *                     max: { type: number }
  *                   required: [min, max]
  *             required: [mode, startPrice, duration]
- *           example:
- *             mode: 1
- *             startPrice: 0.1234
- *             duration: 300
- *             priceRanges:
- *               - { min: 0.10, max: 0.12 }
- *               - { min: 0.12, max: 0.14 }
- *               - { min: 0.14, max: 0.16 }
  *     responses:
  *       200:
  *         description: Round started
- *         content:
- *           application/json:
- *             example:
- *               success: true
- *               round:
- *                 id: "round-id"
- *                 mode: "UP_DOWN"
- *                 status: "ACTIVE"
- *                 startTime: "2026-01-29T00:00:00.000Z"
- *                 endTime: "2026-01-29T00:05:00.000Z"
- *                 startPrice: 0.1234
- *                 sorobanRoundId: "1"
- *                 priceRanges: []
  *       400:
  *         description: Validation error
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
  *       401:
- *         description: Unauthorized (missing/invalid token)
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
+ *         description: Unauthorized
  *       403:
- *         description: Forbidden (admin role required)
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
+ *         description: Forbidden
  *       409:
- *         description: Conflict - active round already exists
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
- *       429:
- *         description: Too many requests
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/RateLimitResponse'
- *       500:
- *         description: Internal server error
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
- *     x-codeSamples:
- *       - lang: cURL
- *         source: |
- *           curl -X POST "$API_BASE_URL/api/rounds/start" \\
- *             -H "Content-Type: application/json" \\
- *             -H "Authorization: Bearer $TOKEN" \\
- *             -d '{"mode":0,"startPrice":0.1234,"duration":300}'
+ *         description: Conflict - active round exists
  */
-router.post('/start', requireAdmin, adminRoundRateLimiter, validate(startRoundSchema), (async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-        const { mode, startPrice, duration, priceRanges } = req.body;
-        const gameMode = mode === 0 ? 'UP_DOWN' : 'LEGENDS';
-        const round = await roundService.startRound(
-          gameMode,
-          startPrice,
-          duration,
-          priceRanges,
-        );
+router.post('/start', requireAdmin, adminRoundRateLimiter, validate(startRoundSchema), asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { mode, startPrice, duration, priceRanges } = req.body;
+    const gameMode = mode === 0 ? 'UP_DOWN' : 'LEGENDS';
+    const round = await roundService.startRound(
+      gameMode,
+      startPrice,
+      duration,
+      priceRanges,
+    );
 
-        res.json({
-            success: true,
-            round: {
-                id: round.id,
-                mode: round.mode,
-                status: round.status,
-                startTime: round.startTime,
-                endTime: round.endTime,
-                startPrice: toDecimalString(round.startPrice),
-                sorobanRoundId: round.sorobanRoundId,
-                isSoroban: round.isSoroban,
-                priceRanges: round.priceRanges,
-            },
-        });
-    } catch (error) {
-        next(error);
-    }
-}) as any);
+    res.json({
+        success: true,
+        round: {
+            id: round.id,
+            mode: round.mode,
+            status: round.status,
+            startTime: round.startTime,
+            endTime: round.endTime,
+            startPrice: toDecimalString(round.startPrice),
+            sorobanRoundId: round.sorobanRoundId,
+            isSoroban: round.isSoroban,
+            priceRanges: round.priceRanges,
+        },
+    });
+}));
 
 /**
  * @swagger
  * /api/rounds/active:
  *   get:
  *     summary: Get active rounds
- *     description: Returns the on-chain active round when Soroban is configured; falls back to database rounds when RPC is unavailable or ROUNDS_MOCK_MODE=true.
+ *     description: Returns active rounds. Delegates to shared round service with fallback chain.
  *     tags: [rounds]
  *     responses:
  *       200:
  *         description: Active rounds
- *         content:
- *           application/json:
- *             example:
- *               success: true
- *               source: soroban
- *               rounds: []
- *       500:
- *         description: Internal server error
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
- *     x-codeSamples:
- *       - lang: cURL
- *         source: |
- *           curl -X GET "$API_BASE_URL/api/rounds/active"
  */
 router.get('/active', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -199,29 +156,11 @@ router.get('/active', async (req: Request, res: Response, next: NextFunction) =>
  *         name: id
  *         required: true
  *         schema: { type: string }
- *         description: Round ID
  *     responses:
  *       200:
  *         description: Round found
- *         content:
- *           application/json:
- *             example:
- *               success: true
- *               round: {}
  *       404:
  *         description: Round not found
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
- *       500:
- *         description: Internal server error
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
- *     x-codeSamples:
- *       - lang: cURL
- *         source: |
- *           curl -X GET "$API_BASE_URL/api/rounds/round-id"
  */
 router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -253,12 +192,17 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
     }
 });
 
+// Stub bet endpoint — for logging/analytics only; on-chain bets go via Soroban
+router.post('/:id/bet', betRateLimiter, validate(betSchema), (_req: Request, res: Response) => {
+  res.json({ success: true, message: 'Bet recorded (stub)' });
+});
+
 /**
  * @swagger
  * /api/rounds/{id}/resolve:
  *   post:
  *     summary: Resolve a round with the final price
- *     description: Oracle-only (or Admin). Resolves the round and computes winners. LEGENDS uses inclusive-lower/exclusive-upper range matching, with final range upper-bound inclusive.
+ *     description: Oracle-only. Resolves the round and computes winners.
  *     tags: [rounds]
  *     security:
  *       - bearerAuth: []
@@ -267,7 +211,6 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
  *         name: id
  *         required: true
  *         schema: { type: string }
- *         description: Round ID
  *     requestBody:
  *       required: true
  *       content:
@@ -275,101 +218,57 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
  *           schema:
  *             type: object
  *             properties:
- *               finalPrice: { type: number, description: Final price (must be > 0) }
+ *               finalPrice: { type: number }
  *             required: [finalPrice]
- *           example:
- *             finalPrice: 0.2345
  *     responses:
  *       200:
  *         description: Round resolved
- *         content:
- *           application/json:
- *             example:
- *               success: true
- *               round:
- *                 id: "round-id"
- *                 status: "RESOLVED"
- *                 startPrice: 0.1234
- *                 endPrice: 0.2345
- *                 resolvedAt: "2026-01-29T00:10:00.000Z"
- *                 predictions: 10
- *                 winners: 4
- *                 legendsPayoutRule: "winner payout = stake + (stake / winningPool) * losingPool"
  *       400:
  *         description: Validation error
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
  *       401:
  *         description: Unauthorized
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
  *       403:
- *         description: Forbidden (oracle/admin required)
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
- *       429:
- *         description: Too many requests
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/RateLimitResponse'
- *       500:
- *         description: Internal server error
- *         content:
- *           application/json:
- *             $ref: '#/components/schemas/ErrorResponse'
- *     x-codeSamples:
- *       - lang: cURL
- *         source: |
- *           curl -X POST "$API_BASE_URL/api/rounds/round-id/resolve" \\
- *             -H "Content-Type: application/json" \\
- *             -H "Authorization: Bearer $TOKEN" \\
- *             -d '{"finalPrice":0.2345}'
+ *         description: Forbidden
+ *       404:
+ *         description: Round not found
  */
-router.post('/:id/resolve', requireOracle, oracleResolveRateLimiter, validate(resolveRoundSchema), (async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    try {
-        const { id } = req.params;
-        const { finalPrice } = req.body;
+router.post('/:id/resolve', requireOracle, oracleResolveRateLimiter, validate(resolveRoundSchema), asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const { finalPrice } = req.body;
 
-        const { outcome, round } = await resolutionService.resolveRound(id, toDecimal(finalPrice));
+    const { outcome, round } = await resolutionService.resolveRound(id, toDecimal(finalPrice));
 
-        if (!round) {
-            return res.status(404).json({ success: false, error: "Round not found" });
-        }
-
-        res.json({
-            success: true,
-            outcome,
-            round: {
-                id: round.id,
-                status: round.status,
-                startPrice: toDecimalString(round.startPrice),
-                endPrice: round.endPrice !== null && round.endPrice !== undefined ? toDecimalString(round.endPrice) : null,
-                resolvedAt: round.resolvedAt,
-                predictions: round.predictions ? round.predictions.length : 0,
-                winners: round.predictions ? round.predictions.filter((p: any) => p.won === true).length : 0,
-            },
-        });
-    } catch (error) {
-        next(error);
+    if (!round) {
+        return res.status(404).json({ success: false, error: "Round not found" });
     }
-}) as any);
+
+    res.json({
+        success: true,
+        outcome,
+        round: {
+            id: round.id,
+            status: round.status,
+            startPrice: toDecimalString(round.startPrice),
+            endPrice: round.endPrice !== null && round.endPrice !== undefined ? toDecimalString(round.endPrice) : null,
+            resolvedAt: round.resolvedAt,
+            predictions: round.predictions ? round.predictions.length : 0,
+            winners: round.predictions ? round.predictions.filter((p: any) => p.won === true).length : 0,
+        },
+    });
+}));
 
 /**
  * @swagger
  * /api/rounds/{id}/simulate:
  *   post:
  *     summary: Simulate a round resolution (Non-Production QA Endpoint)
- *     description: Simulates payout distribution for frontend QA without placing real bets or mutating the round status. Disabled in production unless ENABLE_SIMULATION=true.
+ *     description: Simulates payout distribution without placing real bets or mutating the round. Disabled in production unless ENABLE_SIMULATION=true.
  *     tags: [rounds]
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
  *         schema: { type: string }
- *         description: Round ID
  *     requestBody:
  *       required: true
  *       content:
@@ -377,11 +276,11 @@ router.post('/:id/resolve', requireOracle, oracleResolveRateLimiter, validate(re
  *           schema:
  *             type: object
  *             properties:
- *               finalPrice: { type: number, description: Simulated final price }
+ *               finalPrice: { type: number }
  *             required: [finalPrice]
  *     responses:
  *       200:
- *         description: Simulation results showing winners, losers, and payout mock
+ *         description: Simulation results
  *       400:
  *         description: Validation error
  *       403:
@@ -394,28 +293,56 @@ router.post('/:id/simulate', async (req: Request, res: Response, next: NextFunct
         if (config.app.nodeEnv === 'production' && !config.app.enableSimulation) {
             return res.status(403).json({ success: false, error: 'Simulation disabled in production unless ENABLE_SIMULATION=true' });
         }
-        
+
         const { id } = req.params;
         const { finalPrice } = req.body;
-        
+
         if (finalPrice === undefined || finalPrice === null) {
             return res.status(400).json({ success: false, error: 'finalPrice is required' });
         }
-        
+
         const result = await simulationService.simulateRound(id, finalPrice);
         if (!result) {
             return res.status(404).json({ success: false, error: 'Round not found' });
         }
-        
+
         res.json({
             success: true,
-            roundId: id,
-            simulatedPrice: finalPrice,
-            ...result
+            roundId: result.roundId,
+            simulatedPrice: result.simulatedPrice,
+            mode: result.mode,
+            startPrice: result.startPrice,
+            winningSide: result.winningSide,
+            winningRange: result.winningRange,
+            predictions: result.predictions,
+            summary: result.summary,
         });
     } catch (error) {
         next(error);
     }
 });
+
+// Hackathon mutation endpoints - with Zod validation
+router.post('/hackathon/up-down/:id/bet', betRateLimiter, validate(upDownBetSchema), (async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { address, amount, side } = req.body;
+    await getRepositories().rounds.placeBet(id, address, amount, side);
+    sendSuccess(res, { message: 'Bet recorded (stub)' });
+  } catch (err) {
+    next(err);
+  }
+}) as any);
+
+router.post('/hackathon/precision/:id/bet', betRateLimiter, validate(precisionBetSchema), (async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { address, amount, predictedPrice } = req.body;
+    await getRepositories().rounds.placeBet(id, address, amount, undefined, predictedPrice);
+    sendSuccess(res, { message: 'Precision bet recorded (stub)' });
+  } catch (err) {
+    next(err);
+  }
+}) as any);
 
 export default router;

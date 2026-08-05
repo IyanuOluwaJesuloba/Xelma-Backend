@@ -51,5 +51,25 @@ services:
       retries: 5
       start_period: 45s
 
+  hackathon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    profiles: ["hackathon"]
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.hackathon.example
+    environment:
+      PORT: 3000
+      HEALTHCHECK_PATH: /api/health
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+
 volumes:
   postgres_data:

@@ -9,6 +9,7 @@ import { mockDataRepository } from '../repositories/mockData.repository';
  * GET /api/leaderboard              Drizzle/Postgres          mockLeaderboard (in-memory seed)
  * GET /api/stats                    Prisma/Postgres           MOCK_PLATFORM_STATS (in-memory)
  * GET /api/prices  (priceService)   CoinGecko (30s cache)     mockData.prices (in-memory)
+ * GET /api/price   (oracle, prod)   XLM oracle providers      n/a on hackathon — use /api/prices
  * GET /api/health  (soroban)        live soroban RPC          soroban.isReady() flag only
  * ─────────────────────────────────────────────────────────────────────────────
  *
@@ -37,21 +38,9 @@ export type MockLeaderboardUser = {
 };
 
 /**
- * Static seed leaderboard used when DATA_STORE=memory or the Drizzle leaderboard
- * table is empty. Not sourced from the blockchain — these are demo entries.
+ * Seed leaderboard snippet shown in the source file's docs; the actual
+ * in-memory list (with full Stellar addresses) is below.
  */
-export const mockLeaderboard: MockLeaderboardUser[] = [
-  { rank: 1, address: 'GBZX...9QRA', totalWins: 42, totalLosses: 8, winStreak: 9, xp: 18400, rankTitle: 'Oracle' },
-  { rank: 2, address: 'GDK4...2LXM', totalWins: 37, totalLosses: 10, winStreak: 6, xp: 15950, rankTitle: 'Market Sage' },
-  { rank: 3, address: 'GAV7...8PQN', totalWins: 35, totalLosses: 13, winStreak: 4, xp: 14820, rankTitle: 'Trend Master' },
-  { rank: 4, address: 'GC9M...5VTE', totalWins: 31, totalLosses: 14, winStreak: 3, xp: 13210, rankTitle: 'Signal Hunter' },
-  { rank: 5, address: 'GCB2...7KDW', totalWins: 29, totalLosses: 15, winStreak: 5, xp: 12490, rankTitle: 'Pool Climber' },
-  { rank: 6, address: 'GDPT...4NLA', totalWins: 26, totalLosses: 16, winStreak: 2, xp: 11160, rankTitle: 'Price Reader' },
-  { rank: 7, address: 'GB7N...6XHF', totalWins: 24, totalLosses: 18, winStreak: 1, xp: 10240, rankTitle: 'Streak Keeper' },
-  { rank: 8, address: 'GCR8...3MLB', totalWins: 22, totalLosses: 20, winStreak: 2, xp: 9480, rankTitle: 'Chart Scout' },
-  { rank: 9, address: 'GAF5...1ZQH', totalWins: 19, totalLosses: 17, winStreak: 1, xp: 8360, rankTitle: 'Breakout Seeker' },
-  { rank: 10, address: 'GDT6...8RCV', totalWins: 17, totalLosses: 19, winStreak: 0, xp: 7540, rankTitle: 'Rookie Prophet' },
-];
 
 /**
  * Fetches active rounds from the Drizzle/Postgres hackathon schema.
@@ -123,8 +112,11 @@ export const mockData = {
 };
 
 /**
- * Zero-value platform stats returned by the stats service when both the
- * Drizzle and Prisma stores are empty or unreachable.
+ * Seed platform stats returned by the stats service when DATA_MODE=mock or
+ * the database is unreachable. In live mode with an empty database the service
+ * returns legitimate zeros with isFallback=false so dashboards can distinguish
+ * "no data yet" from "reading mock constants".
+ *
  * Env flag: DATA_MODE=mock causes the stats service to use these values
  * instead of querying Postgres.
  */

@@ -1,6 +1,10 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, beforeAll } from "@jest/globals";
 import request from "supertest";
 import express, { Request, Response, NextFunction } from "express";
+import {
+  PrismaClientKnownRequestError,
+  PrismaClientValidationError,
+} from "@prisma/client/runtime/library";
 import {
   AppError,
   ValidationError,
@@ -13,6 +17,17 @@ import {
 } from "../utils/errors";
 import { errorHandler } from "../middleware/errorHandler.middleware";
 import { requestIdMiddleware } from "../middleware/requestId.middleware";
+
+function prismaKnownError(
+  code: string,
+  meta?: Record<string, unknown>,
+): PrismaClientKnownRequestError {
+  return new PrismaClientKnownRequestError(`Prisma ${code}`, {
+    code,
+    clientVersion: "test",
+    meta,
+  });
+}
 
 /** Build a minimal Express app with one route that throws the given error */
 function makeApp(thrower: (req: Request, res: Response, next: NextFunction) => void) {
@@ -193,6 +208,81 @@ describe("errorHandler middleware", () => {
     expect(res.body.stack).toBeUndefined();
 
     process.env.NODE_ENV = originalEnv;
+  });
+});
+
+describe("errorHandler Prisma mapping", () => {
+  it("maps P2025 to 404 NOT_FOUND", async () => {
+    const app = makeApp((_req, _res, next) =>
+      next(prismaKnownError("P2025", { cause: "User not found" })),
+    );
+
+    const res = await request(app).get("/test");
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe("NOT_FOUND");
+    expect(res.body.message).toBe("User not found");
+    expect(res.body.path).toBe("/test");
+  });
+
+  it("maps P2025 without meta.cause to default message", async () => {
+    const app = makeApp((_req, _res, next) => next(prismaKnownError("P2025")));
+
+    const res = await request(app).get("/test");
+    expect(res.status).toBe(404);
+    expect(res.body.message).toBe("Record not found");
+  });
+
+  it("maps P2002 to 409 CONFLICT with target fields", async () => {
+    const app = makeApp((_req, _res, next) =>
+      next(prismaKnownError("P2002", { target: ["email", "wallet"] })),
+    );
+
+    const res = await request(app).get("/test");
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("CONFLICT");
+    expect(res.body.message).toBe("Unique constraint failed on: email, wallet");
+  });
+
+  it("maps P2003 to 400 FOREIGN_KEY_VIOLATION", async () => {
+    const app = makeApp((_req, _res, next) => next(prismaKnownError("P2003")));
+
+    const res = await request(app).get("/test");
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("FOREIGN_KEY_VIOLATION");
+    expect(res.body.message).toBe("Related record not found");
+  });
+
+  it("maps unknown Prisma known-request codes to 500", async () => {
+    const app = makeApp((_req, _res, next) => next(prismaKnownError("P9999")));
+
+    const res = await request(app).get("/test");
+    expect(res.status).toBe(500);
+    expect(res.body.code).toBe("INTERNAL_SERVER_ERROR");
+    expect(res.body.message).toBe("Database error");
+  });
+
+  it("maps PrismaClientValidationError to 400 VALIDATION_ERROR", async () => {
+    const app = makeApp((_req, _res, next) =>
+      next(
+        new PrismaClientValidationError("Invalid args", {
+          clientVersion: "test",
+        }),
+      ),
+    );
+
+    const res = await request(app).get("/test");
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("VALIDATION_ERROR");
+    expect(res.body.message).toBe("Invalid database query parameters");
+  });
+
+  it("recognizes runtime-library Prisma errors via instanceof", () => {
+    const known = prismaKnownError("P2025");
+    const validation = new PrismaClientValidationError("bad", {
+      clientVersion: "test",
+    });
+    expect(known).toBeInstanceOf(PrismaClientKnownRequestError);
+    expect(validation).toBeInstanceOf(PrismaClientValidationError);
   });
 });
 

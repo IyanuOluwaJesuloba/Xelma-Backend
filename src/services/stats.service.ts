@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma";
 import { MOCK_PLATFORM_STATS } from "../data/mockData";
+import logger from "../utils/logger";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -9,7 +10,7 @@ export interface PlatformStats {
     totalRounds: number;
     totalUsers: number;
     totalBets: number;
-    /** true = numbers came from the live DB; false = mock fallback was used */
+    /** true = mock constants were served (DATA_MODE=mock or DB unreachable); false = live DB counts */
     isFallback: boolean;
     cachedAt: string; // ISO-8601 timestamp
 }
@@ -40,18 +41,35 @@ function setCache(stats: PlatformStats): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Queries the database for live platform stats.
- * Falls back to MOCK_PLATFORM_STATS when the data store is empty or
- * all counts come back as zero (e.g. a freshly seeded dev environment).
+ * Returns aggregated platform statistics.
  *
- * Fallback mode is documented via `isFallback: true` in the response.
+ * Behaviour depends on DATA_MODE and database state:
+ *   DATA_MODE=mock            → returns MOCK_PLATFORM_STATS with isFallback=true
+ *   DATA_MODE=live (or unset) → queries the database:
+ *     • DB has data           → returns live counts with isFallback=false
+ *     • DB empty              → returns zero counts with isFallback=false
+ *     • DB unreachable        → returns MOCK_PLATFORM_STATS with isFallback=true
+ *
+ * An empty production database returns legitimate zeros (isFallback=false)
+ * so dashboards can distinguish "no data yet" from "reading mock constants".
  */
 export async function getPlatformStats(): Promise<PlatformStats> {
     // 1. Return cached value if still fresh
     const hit = getCached();
     if (hit) return hit;
 
-    // 2. Query DB
+    // 2. In mock mode, skip the DB entirely and return seed constants
+    if (process.env.DATA_MODE === "mock") {
+        const stats: PlatformStats = {
+            ...MOCK_PLATFORM_STATS,
+            isFallback: true,
+            cachedAt: new Date().toISOString(),
+        };
+        setCache(stats);
+        return stats;
+    }
+
+    // 3. Query DB (live mode)
     let totalRounds = 0;
     let totalUsers = 0;
     let totalBets = 0;
@@ -64,30 +82,31 @@ export async function getPlatformStats(): Promise<PlatformStats> {
             prisma.prediction.count(),
         ]);
     } catch (err) {
-        // DB unreachable (connection error, migration pending, etc.)
         dbAvailable = false;
-        console.error("[stats.service] DB query failed, using mock fallback:", err);
+        logger.error("[stats.service] DB query failed, using mock fallback:", {
+          error: err instanceof Error ? err.message : String(err),
+        });
     }
 
-    // 3. Decide whether to use live or mock data
-    const dataIsEmpty = totalRounds === 0 && totalUsers === 0 && totalBets === 0;
-    const useFallback = !dbAvailable || dataIsEmpty;
-
-    const stats: PlatformStats = useFallback
-        ? {
+    // 4. DB unreachable → fall back to mock constants (with isFallback=true)
+    if (!dbAvailable) {
+        const stats: PlatformStats = {
             ...MOCK_PLATFORM_STATS,
             isFallback: true,
             cachedAt: new Date().toISOString(),
-        }
-        : {
-            totalRounds,
-            totalUsers,
-            totalBets,
-            isFallback: false,
-            cachedAt: new Date().toISOString(),
         };
+        setCache(stats);
+        return stats;
+    }
 
-    // 4. Cache and return
+    // 5. DB responded — return live (possibly zero) counts with isFallback=false
+    const stats: PlatformStats = {
+        totalRounds,
+        totalUsers,
+        totalBets,
+        isFallback: false,
+        cachedAt: new Date().toISOString(),
+    };
     setCache(stats);
     return stats;
 }

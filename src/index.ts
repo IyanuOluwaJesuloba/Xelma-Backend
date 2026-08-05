@@ -1,88 +1,47 @@
-// Enforce Node.js 22+ runtime requirement at startup before loading any modules
 const nodeMajorVersion = parseInt(process.versions.node.split('.')[0], 10);
-if (nodeMajorVersion < 22) {
-  console.error(`🔥 CRITICAL ERROR: Application startup failed.`);
-  console.error(`Node.js v22.x or higher is required. You are running v${process.version}.`);
-  console.error(`Please upgrade Node.js to avoid local vs Render mismatches.`);
+if (nodeMajorVersion < 22 && process.env.NODE_ENV !== 'test') {
+  logger.error('Application startup failed: Node.js v22.x or higher is required', {
+    nodeVersion: process.version,
+    hint: 'Upgrade Node.js to avoid local vs Render mismatches.',
+  });
   process.exit(1);
 }
 
-import express, { Express, Request, Response, NextFunction } from 'express';
-import cors from 'cors';
+import { Express } from 'express';
 import dotenv from 'dotenv';
 import { assertPreflightOrExit } from './config/preflight';
 import { createServer, Server as HttpServer } from 'http';
-import authRoutes from './routes/auth.routes';
-import userRoutes from './routes/user.routes';
-import roundsRoutes from './routes/rounds.routes';
-import betsRoutes from './routes/bets.routes';
-import predictionsRoutes from './routes/predictions.routes';
-import educationRoutes from './routes/education.routes';
-import leaderboardRoutes from './routes/leaderboard.routes';
-import notificationsRoutes from './routes/notifications.routes';
 import priceOracle from './services/oracle';
-import sorobanService from './services/soroban.service';
 import websocketService from './services/websocket.service';
 import schedulerService from './services/scheduler.service';
 import roundSchedulerService from './services/round-scheduler.service';
 import oracleService from './services/oracle.service';
 import logger from './utils/logger';
 import { validateVendoredBindings } from './utils/bindings-validator';
-import { errorHandler } from './middleware/errorHandler.middleware';
 import config from './config';
-import { metricsMiddleware } from './middleware/metrics.middleware';
-import { requestIdMiddleware } from './middleware/requestId.middleware';
-import metricsRoutes from './routes/metrics.routes';
-import adminMetricsRoutes from './routes/admin-metrics.routes';
-import errorsRoutes from './routes/errors.routes';
-import corsDiagnosticsRoutes from './routes/admin-cors-diagnostics.routes';
-import deadLetterRoutes from './routes/admin-dead-letter.routes';
-import healthRoutes from './routes/health';
-import chatRoutes from './routes/chat.routes';
-import tournamentsRoutes from './routes/tournaments.routes';
-import pricesRoutes from './routes/prices';
-import swaggerUi from 'swagger-ui-express';
-import { swaggerSpec } from './docs/openapi';
-import { initializeSocket } from './socket';
+import { createApp as createAppFromFactory, AppFeatures } from './app-factory';
+// Route and middleware imports moved to src/app-factory.ts; only the Soroban
+// env resolver is still used here, by the startup log below.
+import {
+  formatResolvedSorobanConfigForLog,
+  resolveSorobanEnvVars,
+} from './config/env';
+import { initializeSocket, closeWebSocket } from './socket';
 import { prisma } from './lib/prisma';
 import path from 'path';
-import { Router } from 'express';
 
 const envFile = process.env.NODE_ENV === 'test' ? '.env.test' : '.env';
 dotenv.config({ path: path.resolve(process.cwd(), envFile), override: false });
 dotenv.config({ override: false });
 
 export { getHttpCorsOrigins } from './utils/cors';
-import { getHttpCorsOrigins } from './utils/cors';
-
-/**
- * Apply security headers to every response.
- * Prevents common browser-based attacks without adding helmet as a dependency.
- */
-function securityHeaders(
-   _req: Request,
-   res: Response,
-   next: NextFunction
-): void {
-   res.setHeader('X-Content-Type-Options', 'nosniff');
-   res.setHeader('X-Frame-Options', 'DENY');
-   res.setHeader('X-XSS-Protection', '1; mode=block');
-   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-   res.setHeader('Content-Security-Policy', "default-src 'self'");
-   res.setHeader(
-      'Permissions-Policy',
-      'geolocation=(), camera=(), microphone=()'
-   );
-   next();
-}
 
 const validateEnv = (): void => {
    if (!process.env.JWT_SECRET) {
-      console.error('🔥 CRITICAL ERROR: Application startup failed.');
-      console.error('Missing required environment variable: JWT_SECRET');
-      console.error(
-         'Please configure this securely in your environment before starting the app.'
-      );
+      logger.error('Application startup failed: Missing required environment variable: JWT_SECRET', {
+         variable: 'JWT_SECRET',
+      });
+      logger.error('Please configure this securely in your environment before starting the app.');
       process.exit(1); // 1 indicates a failure/error state
    }
 };
@@ -120,146 +79,35 @@ assertPreflightOrExit();
 validateEnv();
 logBindingsValidation();
 logger.info(`Active DATA_MODE=${config.app.dataMode}`);
+logger.info(`ROUNDS_MOCK_MODE=${config.app.roundsMockMode}`);
+logger.info(
+  'Soroban configuration resolved',
+  formatResolvedSorobanConfigForLog(resolveSorobanEnvVars(), {
+    rpcUrl: config.soroban.rpcUrl,
+    network: config.soroban.network,
+  }),
+);
 
 const betStubMode = process.env.BET_STUB_MODE === "true";
 logger.info(`Bet mode: ${betStubMode ? "STUB (no on-chain calls)" : "ON-CHAIN (Soroban)"}`, {
   BET_STUB_MODE: betStubMode,
 });
+logger.info(
+  `Soroban money-path policy: ${config.soroban.failClosed ? "FAIL-CLOSED (abort on chain failure)" : "FAIL-OPEN (DB-only fallback allowed)"}`,
+  { SOROBAN_FAIL_CLOSED: config.soroban.failClosed },
+);
+logger.info('Runtime modes documented at docs/runtime-modes.md');
 
 /**
  * Create and configure the Express app without starting any background
  * jobs or binding to a network port. Safe to import in tests.
+ *
+ * HTTP wiring lives in `src/app-factory.ts` and is shared with the hackathon
+ * entrypoint; this only selects the full feature set. See CONTRIBUTING.md for
+ * the flag matrix.
  */
-export function createApp(): Express {
-   const app = express();
-
-   // Security headers (before all routes)
-   app.use(securityHeaders);
-
-   // CORS — origin allowlist is driven by CLIENT_URL / ALLOWED_ORIGINS env vars
-   app.use(
-      cors({
-         origin: getHttpCorsOrigins(),
-         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-         allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key'],
-         credentials: true,
-      })
-   );
-
-   app.use(express.json());
-   app.use(express.urlencoded({ extended: true }));
-
-   // Request ID middleware (first, so all subsequent middleware has access)
-   app.use(requestIdMiddleware);
-
-   // Prometheus metrics middleware (before routes so all requests are tracked)
-   app.use(metricsMiddleware);
-
-   // Request logging middleware
-   app.use((req: Request, res: Response, next: NextFunction) => {
-      const requestId = (req as any).requestId;
-      logger.info(`${req.method} ${req.path}`, { requestId });
-      next();
-   });
-
-    // API Routes
-    app.use('/api/auth', authRoutes);
-    app.use('/api/user', userRoutes);
-    app.use('/api/rounds', roundsRoutes);
-    app.use('/api/bets', betsRoutes);
-    app.use('/api/predictions', predictionsRoutes);
-    app.use('/api/education', educationRoutes);
-    app.use('/api/leaderboard', leaderboardRoutes);
-    app.use('/api/chat', chatRoutes);
-    app.use('/api/notifications', notificationsRoutes);
-    app.use('/api/tournaments', tournamentsRoutes);
-    app.use('/api/admin/metrics', adminMetricsRoutes);
-    app.use('/api/errors', errorsRoutes);
-    app.use('/api/admin/cors-diagnostics', corsDiagnosticsRoutes);
-     app.use('/api/admin/dead-letter', deadLetterRoutes);
-     app.use('/health', healthRoutes);
-
-     // Versioned API v1 router (same routes, under /api/v1 prefix)
-    const v1Router = Router();
-    v1Router.use('/auth', authRoutes);
-    v1Router.use('/user', userRoutes);
-    v1Router.use('/rounds', roundsRoutes);
-    v1Router.use('/bets', betsRoutes);
-    v1Router.use('/predictions', predictionsRoutes);
-    v1Router.use('/education', educationRoutes);
-    v1Router.use('/leaderboard', leaderboardRoutes);
-    v1Router.use('/chat', chatRoutes);
-    v1Router.use('/notifications', notificationsRoutes);
-    v1Router.use('/tournaments', tournamentsRoutes);
-    v1Router.use('/admin/metrics', adminMetricsRoutes);
-    v1Router.use('/errors', errorsRoutes);
-    v1Router.use('/admin/cors-diagnostics', corsDiagnosticsRoutes);
-    v1Router.use('/admin/dead-letter', deadLetterRoutes);
-    app.use('/api/v1', v1Router);
-
-    // Deprecation headers for legacy unversioned /api/* paths
-    app.use('/api', (req, res, next) => {
-       if (!req.path.startsWith('/v1')) {
-          res.setHeader('Deprecation', 'true');
-          res.setHeader('Sunset', 'Sat, 01 Jan 2027 00:00:00 GMT');
-          res.setHeader('Link', `</api/v1${req.path}>; rel="successor-version"`);
-       }
-       next();
-    });
-
-   // Prometheus metrics endpoint
-   app.use('/metrics', metricsRoutes);
-
-   // Swagger UI (OpenAPI)
-   app.get('/docs', (req: Request, res: Response) =>
-      res.redirect(302, '/api-docs')
-   );
-   app.get('/api-docs.json', (req: Request, res: Response) =>
-      res.json(swaggerSpec)
-   );
-   app.use(
-      '/api-docs',
-      swaggerUi.serve,
-      swaggerUi.setup(swaggerSpec, { explorer: true })
-   );
-
-   // Hello World endpoint
-   app.get('/', (req: Request, res: Response) => {
-      res.json({
-         message: 'Hello World! Xelma Backend is running',
-         timestamp: new Date().toISOString(),
-         status: 'OK',
-      });
-    });
-
-    // Multi-asset prices via CoinGecko (BTC, ETH, XLM)
-   app.use('/api', pricesRoutes);
-
-    // Price Oracle endpoint (returns price_usd as a precise decimal string)
-   app.get('/api/price', (req: Request, res: Response) => {
-      const price = priceOracle.getPriceString();
-      const lastUpdatedAt = priceOracle.getLastUpdatedAt();
-      res.json({
-         asset: 'XLM',
-         price_usd: price,
-         stale: priceOracle.isStale(),
-         provider: priceOracle.getLastProvider(),
-         lastUpdatedAt: lastUpdatedAt?.toISOString() ?? null,
-         source: priceOracle.getActiveSource(),
-         timestamp: new Date().toISOString(),
-      });
-   });
-
-   // 404 handler - forward to error handler for consistent response format
-   app.use((req: Request, res: Response, next: NextFunction) => {
-      const { NotFoundError } = require('./utils/errors');
-      next(new NotFoundError(`Route ${req.method} ${req.path} not found`));
-   });
-
-   // Centralized error handler (must be last)
-   app.use(errorHandler);
-
-   return app;
+export function createApp(features?: Partial<AppFeatures>): Express {
+   return createAppFromFactory({ mode: 'full', features }) as Express;
 }
 
 interface ServerHandle {
@@ -329,6 +177,7 @@ export async function startServer(app: Express): Promise<ServerHandle> {
       if (priceInterval) {
          clearInterval(priceInterval);
       }
+      closeWebSocket();
       if (!apiOnly) {
          priceOracle.stopPolling();
          roundSchedulerService.stop();
@@ -336,7 +185,10 @@ export async function startServer(app: Express): Promise<ServerHandle> {
       }
       // Always stop the general scheduler (outbox poller, cleanup jobs)
       schedulerService.stop();
-      httpServer.close();
+      httpServer.closeAllConnections();
+      await new Promise<void>((resolve) => {
+         httpServer.close(() => resolve());
+      });
       await prisma.$disconnect();
       logger.info('Shutdown complete');
    };

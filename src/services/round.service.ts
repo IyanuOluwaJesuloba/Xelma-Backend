@@ -13,6 +13,7 @@ import config from "../config";
 import {
   ActiveRoundSource,
   mapDatabaseActiveRound,
+  mapMockActiveRound,
   mapSorobanActiveRound,
 } from "../utils/soroban-round.mapper";
 import { getMockRounds } from "../data/mockData";
@@ -65,7 +66,7 @@ export class RoundService {
         try {
           await sorobanService.createRound(startPriceDecimal, 0);
         } catch (e) {
-          logger.warn("Soroban createRound failed, proceeding with DB-only round:", e);
+          sorobanService.applyMoneyPathFailure("createRound", e);
         }
       }
 
@@ -184,7 +185,7 @@ export class RoundService {
     rounds: any[];
   }> {
     if (config.app.roundsMockMode) {
-      return { source: "mock", rounds: await getMockRounds() };
+      return { source: "mock", rounds: await this.getMockRoundsForApi() };
     }
 
     // 1. Try Soroban on-chain round
@@ -218,7 +219,17 @@ export class RoundService {
     }
 
     // 3. Ultimate fallback — mock data
-    return { source: "mock", rounds: await getMockRounds() };
+    return { source: "mock", rounds: await this.getMockRoundsForApi() };
+  }
+
+  /**
+   * Mock rounds tagged with `source: "mock"`, so callers can identify the
+   * origin of an individual round the same way they can for the soroban and
+   * database tiers.
+   */
+  private async getMockRoundsForApi(): Promise<any[]> {
+    const rounds = await getMockRounds();
+    return rounds.map((round) => mapMockActiveRound(round as Record<string, unknown>));
   }
 
   /**

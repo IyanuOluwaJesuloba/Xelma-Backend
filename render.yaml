@@ -1,12 +1,17 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
 #
 # Two profiles:
-#   1. xelma-backend-hackathon  – demo server, no database required (default npm start)
-#   2. xelma-backend            – production full backend with Prisma, Soroban, schedulers
+#   1. xelma-backend-hackathon  – demo server, no database required (npm run start:hackathon)
+#   2. xelma-backend            – production full backend with Prisma, Soroban, schedulers (npm start)
 #
 # Pick one when creating the Render service.  The "Hackathon" profile is the
 # simpler option for quick demos; the "Production" profile matches the full
 # runtime described in the README.
+#
+# `npm start` (no args) runs the production entrypoint (dist/index.js) to
+# match the "xelma-backend" Render service below. The hackathon demo has its
+# own explicit script — `npm run start:hackathon` — so contributors and the
+# hackathon Render service never accidentally boot the wrong server.
 
 services:
   # ── Hackathon Demo ──────────────────────────────────────────────────────
@@ -19,7 +24,7 @@ services:
     plan: free
     nodeVersion: "22"
     buildCommand: npm ci && npm run build
-    startCommand: npm start
+    startCommand: npm run start:hackathon
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -28,6 +33,7 @@ services:
         value: "3000"
       - key: JWT_SECRET
         sync: false
+      # No DATABASE_URL needed — DATA_MODE=mock uses in-process data
       - key: DATA_MODE
         value: mock
       - key: ENABLE_MULTIPLAYER_SOCIAL
@@ -36,9 +42,10 @@ services:
         sync: false
       - key: COINGECKO_API_URL
         value: https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd
-      - key: STELLAR_RPC_URL
+      # Canonical Soroban names (aliases STELLAR_RPC_URL / CONTRACT_ID also accepted)
+      - key: SOROBAN_RPC_URL
         value: https://soroban-testnet.stellar.org
-      - key: CONTRACT_ID
+      - key: SOROBAN_CONTRACT_ID
         sync: false
 
   # ── Production (Full Backend) ───────────────────────────────────────────
@@ -55,7 +62,7 @@ services:
     plan: starter
     nodeVersion: "22"
     buildCommand: npm ci && npm run build && npx prisma generate && npx prisma migrate deploy
-    startCommand: node dist/index.js
+    startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV

@@ -10,6 +10,7 @@ import sorobanService from "../services/soroban.service";
 import { toDecimalString } from "../utils/decimal.util";
 import config from "../config";
 import { getMockBetHistory } from "../data/mockData";
+import { sendSuccess, sendError } from "../utils/response";
 
 const router = Router();
 
@@ -55,10 +56,7 @@ router.get(
         balance: toDecimalString(user.virtualBalance),
       };
 
-      return res.json({
-        success: true,
-        profile,
-      });
+      return sendSuccess(res, { profile });
     } catch (error) {
       next(error);
     }
@@ -83,10 +81,7 @@ router.get(
 
       if (!user) return next(new NotFoundError("User not found"));
 
-      return res.json({
-        success: true,
-        balance: toDecimalString(user.virtualBalance),
-      });
+      return sendSuccess(res, { balance: toDecimalString(user.virtualBalance) });
     } catch (error) {
       next(error);
     }
@@ -105,8 +100,7 @@ router.get("/stats", authenticateUser, (async (req: AuthenticatedRequest, res: R
       where: { userId },
     });
 
-    return res.json({
-      success: true,
+    return sendSuccess(res, {
       stats: stats
         ? {
             totalPredictions: stats.totalPredictions,
@@ -179,8 +173,7 @@ router.get(
       ]);
 
       if (!contractStats) {
-        return res.json({
-          success: true,
+        return sendSuccess(res, {
           stats: {
             totalWins: 0,
             totalLosses: 0,
@@ -199,8 +192,7 @@ router.get(
 
       const xp = computeXp(contractStats.total_wins, contractStats.best_streak);
 
-      return res.json({
-        success: true,
+      return sendSuccess(res, {
         stats: {
           totalWins: contractStats.total_wins,
           totalLosses: contractStats.total_losses,
@@ -249,10 +241,7 @@ router.patch(
         },
       });
 
-      return res.json({
-        success: true,
-        profile: updatedUser,
-      });
+      return sendSuccess(res, { profile: updatedUser });
     } catch (error) {
       next(error);
     }
@@ -289,9 +278,7 @@ router.get(
         amount: toDecimalString(tx.amount),
       }));
 
-      return res.json({
-        success: true,
-        data: serializedTransactions,
+      return sendSuccess(res, serializedTransactions, {
         pagination: {
           page,
           limit,
@@ -348,13 +335,13 @@ router.get(
       // Unknown address → empty response (not a 404: the address may exist on-chain
       // but have never placed a bet, and callers should not need to handle errors).
       if (!user) {
-        return res.json({
-          success: true,
-          data: [],
-          ...(cursor
+        return sendSuccess(
+          res,
+          [],
+          cursor
             ? { nextCursor: null }
-            : { pagination: { limit, offset, total: 0, totalPages: 0 } }),
-        });
+            : { pagination: { limit, offset, total: 0, totalPages: 0 } },
+        );
       }
 
       // ── Shared include shape ────────────────────────────────────────────────
@@ -381,10 +368,11 @@ router.get(
           cursorDate = new Date(Buffer.from(cursor, "base64url").toString("utf8"));
           if (isNaN(cursorDate.getTime())) throw new Error("invalid date");
         } catch {
-          return res.status(400).json({
-            success: false,
-            error: "Invalid cursor. Use the nextCursor value returned by a previous response.",
-          });
+          return sendError(
+            res,
+            "Invalid cursor. Use the nextCursor value returned by a previous response.",
+            400,
+          );
         }
 
         const predictions = await prisma.prediction.findMany({
@@ -405,11 +393,7 @@ router.get(
           ? Buffer.from(page[page.length - 1].createdAt.toISOString()).toString("base64url")
           : null;
 
-        return res.json({
-          success: true,
-          data: page.map(mapPrediction),
-          nextCursor,
-        });
+        return sendSuccess(res, page.map(mapPrediction), { nextCursor });
       }
 
       // ── Offset-based path (backward-compatible) ───────────────────────────
@@ -424,9 +408,7 @@ router.get(
         prisma.prediction.count({ where: { userId: user.id } }),
       ]);
 
-      return res.json({
-        success: true,
-        data: predictions.map(mapPrediction),
+      return sendSuccess(res, predictions.map(mapPrediction), {
         pagination: {
           limit,
           offset,
@@ -471,13 +453,13 @@ function handleMockHistory(
   const all = getMockBetHistory(address);
 
   if (!all.length) {
-    res.json({
-      success: true,
-      data: [],
-      ...(cursor
+    sendSuccess(
+      res,
+      [],
+      cursor
         ? { nextCursor: null }
-        : { pagination: { limit, offset, total: 0, totalPages: 0 } }),
-    });
+        : { pagination: { limit, offset, total: 0, totalPages: 0 } },
+    );
     return;
   }
 
@@ -488,10 +470,11 @@ function handleMockHistory(
       cursorDate = new Date(Buffer.from(cursor, "base64url").toString("utf8"));
       if (isNaN(cursorDate.getTime())) throw new Error("invalid date");
     } catch {
-      res.status(400).json({
-        success: false,
-        error: "Invalid cursor. Use the nextCursor value returned by a previous response.",
-      });
+      sendError(
+        res,
+        "Invalid cursor. Use the nextCursor value returned by a previous response.",
+        400,
+      );
       return;
     }
 
@@ -502,7 +485,7 @@ function handleMockHistory(
       ? encodeCursor(page[page.length - 1].timestamp)
       : null;
 
-    res.json({ success: true, data: page, nextCursor });
+    sendSuccess(res, page, { nextCursor });
     return;
   }
 
@@ -510,9 +493,7 @@ function handleMockHistory(
   const page = all.slice(offset, offset + limit);
   const total = all.length;
 
-  res.json({
-    success: true,
-    data: page,
+  sendSuccess(res, page, {
     pagination: {
       limit,
       offset,
@@ -553,8 +534,7 @@ router.get(
         return next(new NotFoundError("User not found"));
       }
 
-      return res.json({
-        success: true,
+      return sendSuccess(res, {
         profile: {
           walletAddress: user.walletAddress,
           nickname: user.nickname,

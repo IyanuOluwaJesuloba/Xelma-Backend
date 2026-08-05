@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireAdmin } from '../middleware/auth.middleware';
-import { getHttpCorsOrigins } from '../utils/cors';
-import { getCorsOrigins as getSocketCorsOrigins } from '../socket';
+import { getCorsOrigins, parseOriginList, CorsOriginConfig } from '../utils/cors';
 
 const router = Router();
 
@@ -36,40 +35,32 @@ const router = Router();
 router.get('/', requireAdmin, (req: Request, res: Response) => {
   const nodeEnv = process.env.NODE_ENV ?? 'development';
   const clientUrl = process.env.CLIENT_URL ?? null;
-  const allowedOriginsRaw = process.env.ALLOWED_ORIGINS ?? null;
-  const allowedOrigins = allowedOriginsRaw
-    ? allowedOriginsRaw.split(',').map((o) => o.trim()).filter(Boolean)
-    : [];
+  const allowedOrigins = parseOriginList(process.env.ALLOWED_ORIGINS);
 
-  let http: { allowAll: boolean; origins: string[]; error?: string };
-  try {
-    const resolved = getHttpCorsOrigins();
-    if (resolved === true) {
-      http = { allowAll: true, origins: [] };
-    } else if (Array.isArray(resolved)) {
-      http = { allowAll: false, origins: resolved };
-    } else if (typeof resolved === 'string') {
-      http = { allowAll: false, origins: [resolved] };
-    } else {
-      http = { allowAll: false, origins: [] };
+  const normalize = (
+    resolved: CorsOriginConfig,
+  ): { allowAll: boolean; origins: string[] } => {
+    if (resolved === true || resolved === '*') {
+      return { allowAll: true, origins: [] };
     }
+    if (Array.isArray(resolved)) {
+      return { allowAll: false, origins: resolved };
+    }
+    if (typeof resolved === 'string') {
+      return { allowAll: false, origins: [resolved] };
+    }
+    return { allowAll: false, origins: [] };
+  };
+
+  let resolved: { allowAll: boolean; origins: string[]; error?: string };
+  try {
+    resolved = normalize(getCorsOrigins());
   } catch (e) {
-    http = { allowAll: false, origins: [], error: (e as Error).message };
+    resolved = { allowAll: false, origins: [], error: (e as Error).message };
   }
 
-  let socket: { allowAll: boolean; origins: string[]; error?: string };
-  try {
-    const resolved = getSocketCorsOrigins();
-    if (resolved === '*') {
-      socket = { allowAll: true, origins: [] };
-    } else if (Array.isArray(resolved)) {
-      socket = { allowAll: false, origins: resolved };
-    } else {
-      socket = { allowAll: false, origins: [resolved] };
-    }
-  } catch (e) {
-    socket = { allowAll: false, origins: [], error: (e as Error).message };
-  }
+  const http = resolved;
+  const socket = resolved;
 
   const testOrigin =
     typeof req.query.origin === 'string' ? req.query.origin : null;

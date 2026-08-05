@@ -26,6 +26,62 @@ export const prisma = (() => {
         upsert: async () => null as any,
         // Add other model mocks if needed.
       },
+      // #391: lightweight in-memory stubs for the hackathon-data models so
+      // unit tests (NODE_ENV=test, no real DATABASE_URL) exercise the same
+      // Prisma-shaped API as production without needing a live database.
+      mockRound: (() => {
+        const seed = [
+          { id: 'btc-updown-live', asset: 'BTC', mode: 'updown', status: 'live', startPrice: 60000, poolUp: 0, poolDown: 0, totalPool: null, predictionCount: null, closesAt: new Date(Date.now() + 300_000).toISOString() },
+          { id: 'eth-precision-live', asset: 'ETH', mode: 'precision', status: 'live', startPrice: 3000, poolUp: null, poolDown: null, totalPool: 0, predictionCount: 0, closesAt: new Date(Date.now() + 300_000).toISOString() },
+          { id: 'xlm-updown-new', asset: 'XLM', mode: 'updown', status: 'new', startPrice: 0.29, poolUp: 0, poolDown: 0, totalPool: null, predictionCount: null, closesAt: new Date(Date.now() + 600_000).toISOString() },
+        ];
+        const store = new Map<string, any>(seed.map(r => [r.id, { ...r }]));
+        return {
+          findMany: async () => Array.from(store.values()),
+          findUnique: async ({ where }: any) => store.get(where.id) ?? null,
+          update: async ({ where, data }: any) => {
+            const existing = store.get(where.id);
+            if (!existing) return null;
+            const updated = { ...existing, ...data };
+            store.set(where.id, updated);
+            return updated;
+          },
+        };
+      })(),
+      mockLeaderboard: (() => {
+        const store = new Map<string, any>();
+        return {
+          findMany: async ({ orderBy }: any = {}) => {
+            const all = Array.from(store.values());
+            if (orderBy?.xp === 'desc') all.sort((a, b) => b.xp - a.xp);
+            return all;
+          },
+          findUnique: async ({ where }: any) => store.get(where.address) ?? null,
+          create: async ({ data }: any) => {
+            store.set(data.address, { ...data });
+            return { ...data };
+          },
+          update: async ({ where, data }: any) => {
+            const existing = store.get(where.address);
+            if (!existing) return null;
+            const updated = { ...existing, ...data };
+            store.set(where.address, updated);
+            return updated;
+          },
+        };
+      })(),
+      mockBet: (() => {
+        const store: any[] = [];
+        let nextId = 1;
+        return {
+          create: async ({ data }: any) => {
+            const record = { id: nextId++, createdAt: new Date(), ...data };
+            store.push(record);
+            return record;
+          },
+          findMany: async () => store,
+        };
+      })(),
       // Add a generic $queryRaw mock for connectivity checks.
       $queryRaw: async () => null,
     } as any;

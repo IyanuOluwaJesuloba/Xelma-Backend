@@ -17,4 +17,9 @@ export const precisionBetSchema = z.object({
     .positive("predictedPrice must be a positive number"),
 });
 
+/** Claim body: address is bound from JWT via bindAuthenticatedWallet before validate. */
+export const claimWinningsSchema = z.object({
+  address: stellarAddressSchema,
+});
+
 export const betSchema = z.union([upDownBetSchema, precisionBetSchema]);

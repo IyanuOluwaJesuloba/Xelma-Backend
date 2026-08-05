@@ -15,10 +15,17 @@ import {
 import predictionService from '../services/prediction.service';
 import {
    checkIdempotency,
+   IDEMPOTENCY_STORE_UNAVAILABLE,
+   IdempotencyStoreUnavailableError,
    isValidIdempotencyKey,
    storeIdempotencyResult,
 } from '../utils/idempotency.util';
-import { ConflictError, ErrorCode, ValidationError } from '../utils/errors';
+import {
+   ConflictError,
+   ErrorCode,
+   ExternalServiceError,
+   ValidationError,
+} from '../utils/errors';
 import { toNumber, toDecimalString } from '../utils/decimal.util';
 
 const router = Router();
@@ -130,6 +137,13 @@ router.post(
                   .json(idempotencyCheck.cachedResponse.body);
             }
 
+            if (idempotencyCheck.error === IDEMPOTENCY_STORE_UNAVAILABLE) {
+               throw new ExternalServiceError(
+                  'Idempotency store unavailable. Please try again.',
+                  ErrorCode.EXTERNAL_SERVICE_ERROR
+               );
+            }
+
             if (idempotencyCheck.error) {
                throw new ConflictError(
                   idempotencyCheck.error,
@@ -161,6 +175,14 @@ router.post(
 
          res.json(responseBody);
       } catch (error) {
+         if (error instanceof IdempotencyStoreUnavailableError) {
+            return next(
+               new ExternalServiceError(
+                  'Idempotency store unavailable. Please try again.',
+                  ErrorCode.EXTERNAL_SERVICE_ERROR
+               )
+            );
+         }
          next(error);
       }
    }) as any

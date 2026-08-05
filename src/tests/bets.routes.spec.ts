@@ -2,9 +2,9 @@ import { describe, it, expect, beforeAll, afterEach, beforeEach } from "@jest/gl
 import request from "supertest";
 import { Express } from "express";
 import { UserRole } from "@prisma/client";
+import { ErrorCode, ExternalServiceError } from "../utils/errors";
 import { createApp } from "../index";
 import sorobanService from "../services/soroban.service";
-import { UserRole } from "@prisma/client";
 import { generateToken } from "../utils/jwt.util";
 
 jest.mock("../services/soroban.service", () => {
@@ -47,8 +47,12 @@ describe("Bets Routes", () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({
         success: true,
-        message: "Bet recorded (stub)",
-        state: "stub",
+        data: {
+          message: "Bet recorded (stub)",
+          state: "stub",
+          betId: expect.any(String),
+          status: "STUB",
+        },
       });
     });
 
@@ -65,15 +69,21 @@ describe("Bets Routes", () => {
       expect(sorobanService.placeBet).toHaveBeenCalledWith(VALID_ADDRESS, 10, "UP");
       expect(res.body).toEqual({
         success: true,
-        message: "Bet placed on-chain",
-        state: "on-chain-success",
-        txHash: "0x123",
+        data: {
+          message: "Bet placed on-chain",
+          state: "on-chain-success",
+          txHash: "0x123",
+          betId: expect.any(String),
+          status: "CONFIRMED",
+        },
       });
     });
 
     it("returns 503 if Soroban contract interaction fails", async () => {
       process.env.BET_STUB_MODE = "false";
-      (sorobanService.placeBet as jest.Mock).mockRejectedValue(new Error("Soroban contract error: tx failed"));
+      (sorobanService.placeBet as jest.Mock).mockRejectedValue(
+        new ExternalServiceError("An unexpected contract error occurred.", ErrorCode.EXTERNAL_SERVICE_ERROR)
+      );
 
       const res = await request(app)
         .post("/api/bets/up-down")
@@ -81,10 +91,7 @@ describe("Bets Routes", () => {
         .send({ address: VALID_ADDRESS, amount: 10, side: "UP" });
 
       expect(res.status).toBe(503);
-      expect(res.body).toEqual({
-        success: false,
-        error: "Contract interaction failed. Please try again.",
-      });
+      expect(res.body.code).toBe(ErrorCode.EXTERNAL_SERVICE_ERROR);
     });
 
     it("rejects mismatched wallet address with 403", async () => {
@@ -259,8 +266,12 @@ describe("Bets Routes", () => {
       expect(res.status).toBe(200);
       expect(res.body).toEqual({
         success: true,
-        message: "Bet recorded (stub)",
-        state: "stub",
+        data: {
+          message: "Bet recorded (stub)",
+          state: "stub",
+          betId: expect.any(String),
+          status: "STUB",
+        },
       });
     });
 
@@ -277,9 +288,13 @@ describe("Bets Routes", () => {
       expect(sorobanService.placePrecisionBet).toHaveBeenCalledWith(VALID_ADDRESS, 5, 0.12);
       expect(res.body).toEqual({
         success: true,
-        message: "Bet placed on-chain",
-        state: "on-chain-success",
-        txHash: "0x456",
+        data: {
+          message: "Bet placed on-chain",
+          state: "on-chain-success",
+          txHash: "0x456",
+          betId: expect.any(String),
+          status: "CONFIRMED",
+        },
       });
     });
 

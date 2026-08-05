@@ -237,13 +237,18 @@ export class ResolutionService {
       const db = tx || prisma;
 
       // Call Soroban contract to resolve
-      // Note: This is called BEFORE DB updates. If it fails, transaction rolls back.
-      // If it succeeds but DB update fails, we have a compensating transaction via retry.
-      await sorobanService.resolveRound(
-         finalPrice,
-         0,
-         BigInt(Math.floor(Date.now() / 1000))
-      );
+      // Note: This is called BEFORE DB updates. If it fails under fail-closed,
+      // the error propagates and the transaction rolls back. Under fail-open,
+      // settlement continues with database-only updates.
+      try {
+         await sorobanService.resolveRound(
+            finalPrice,
+            0,
+            BigInt(Math.floor(Date.now() / 1000))
+         );
+      } catch (e) {
+         sorobanService.applyMoneyPathFailure('resolveRound', e);
+      }
 
       const startPriceDec = toDecimal(round.startPrice);
       const priceWentUp = finalPrice.gt(startPriceDec);

@@ -440,10 +440,14 @@ describe("BetService + AuditService integration", () => {
   });
 
   // --------------------------------------------------------------
-  // Test 2: Failed bet does NOT create audit event
+  // Test 2: Failed bet is audited as BET_FAILED, never BET_ACCEPTED
+  //
+  // A rejected chain submission used to emit nothing at all, which left
+  // failures invisible to analytics and dispute support (#403). It now
+  // emits BET_FAILED — but still never BET_ACCEPTED.
   // --------------------------------------------------------------
-  describe("failed bet does not create audit event (test 2)", () => {
-    it("should not emit audit event when Soroban throws for UP/DOWN bet", async () => {
+  describe("failed bet is audited as BET_FAILED (test 2)", () => {
+    it("should emit BET_FAILED when Soroban throws for UP/DOWN bet", async () => {
       process.env.BET_STUB_MODE = "false";
       (sorobanService.placeBet as jest.Mock).mockRejectedValue(
         new Error("Soroban contract error: tx failed"),
@@ -457,10 +461,21 @@ describe("BetService + AuditService integration", () => {
         }),
       ).rejects.toThrow();
 
-      expect(betAuditService.getEvents()).toHaveLength(0);
+      const events = betAuditService.getEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        event: "BET_FAILED",
+        address: VALID_ADDRESS,
+        amount: 100,
+        side: "UP",
+        mode: "UP_DOWN",
+        status: "FAILED",
+        failureReason: "Soroban contract error: tx failed",
+      });
+      expect(events[0].txHash).toBeUndefined();
     });
 
-    it("should not emit audit event when Soroban throws for PRECISION bet", async () => {
+    it("should emit BET_FAILED when Soroban throws for PRECISION bet", async () => {
       process.env.BET_STUB_MODE = "false";
       (sorobanService.placePrecisionBet as jest.Mock).mockRejectedValue(
         new Error("Circuit breaker is open"),
@@ -474,7 +489,35 @@ describe("BetService + AuditService integration", () => {
         }),
       ).rejects.toThrow();
 
-      expect(betAuditService.getEvents()).toHaveLength(0);
+      const events = betAuditService.getEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        event: "BET_FAILED",
+        address: VALID_ADDRESS,
+        amount: 50,
+        mode: "PRECISION",
+        status: "FAILED",
+        failureReason: "Circuit breaker is open",
+      });
+    });
+
+    it("should never emit BET_ACCEPTED for a failed submission", async () => {
+      process.env.BET_STUB_MODE = "false";
+      (sorobanService.placeBet as jest.Mock).mockRejectedValue(
+        new Error("tx failed"),
+      );
+
+      await expect(
+        betService.recordUpDownBet({
+          address: VALID_ADDRESS,
+          amount: 100,
+          side: "UP",
+        }),
+      ).rejects.toThrow();
+
+      expect(
+        betAuditService.getEvents().filter((e) => e.event === "BET_ACCEPTED"),
+      ).toHaveLength(0);
     });
   });
 });

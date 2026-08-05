@@ -1,18 +1,14 @@
 import { z } from 'zod';
-import { isValidStellarAddress } from '../utils/stellar-address.util';
+import { createStellarAddressSchema } from '../utils/stellar-address.util';
+
+const walletAddressSchema = createStellarAddressSchema('walletAddress');
 
 export const challengeSchema = z.object({
-  walletAddress: z
-    .string()
-    .min(1, 'walletAddress is required')
-    .refine(isValidStellarAddress, 'Invalid Stellar wallet address format'),
+  walletAddress: walletAddressSchema,
 });
 
 export const connectSchema = z.object({
-  walletAddress: z
-    .string()
-    .min(1, 'walletAddress, challenge, and signature are required')
-    .refine(isValidStellarAddress, 'Invalid Stellar wallet address format'),
+  walletAddress: walletAddressSchema,
   challenge: z
     .string()
     .min(1, 'walletAddress, challenge, and signature are required'),

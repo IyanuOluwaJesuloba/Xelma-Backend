@@ -1,33 +1,41 @@
-/**
- * Resolve the CORS origin allowlist for Express HTTP routes.
- * Mirrors the logic in socket.ts getCorsOrigins() so both layers
- * enforce the same policy.
- */
-export function getHttpCorsOrigins(): string | string[] | boolean {
+import logger from './logger';
+
+export type CorsOriginConfig = string | string[] | boolean;
+
+export function parseOriginList(raw: string | undefined | null): string[] {
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+export function getCorsOrigins(): CorsOriginConfig {
   const clientUrl = process.env.CLIENT_URL;
   const isProduction = process.env.NODE_ENV === 'production';
-
-  if (isProduction) {
-    if (!clientUrl) {
-      throw new Error(
-        'CLIENT_URL environment variable is required in production. ' +
-          'HTTP CORS cannot use wildcard origin (*) in production.',
-      );
-    }
-    const additional = process.env.ALLOWED_ORIGINS;
-    if (additional) {
-      return [clientUrl, ...additional.split(',').map((o) => o.trim()).filter(Boolean)];
-    }
-    return clientUrl;
-  }
+  const additional = parseOriginList(process.env.ALLOWED_ORIGINS);
 
   if (!clientUrl) {
-    return true; // Allow all origins in development when CLIENT_URL is unset
+    if (isProduction) {
+      throw new Error(
+        'CLIENT_URL environment variable is required in production. ' +
+          'CORS cannot use a wildcard origin (*) with credentials enabled.',
+      );
+    }
+    logger.warn(
+      'CLIENT_URL not set; allowing all origins for development. ' +
+        'Set CLIENT_URL to restrict origins.',
+    );
+    return true;
   }
 
-  const additional = process.env.ALLOWED_ORIGINS;
-  if (additional) {
-    return [clientUrl, ...additional.split(',').map((o) => o.trim()).filter(Boolean)];
+  if (additional.length > 0) {
+    return [clientUrl, ...additional];
   }
+
   return clientUrl;
 }
+
+export const getHttpCorsOrigins = getCorsOrigins;

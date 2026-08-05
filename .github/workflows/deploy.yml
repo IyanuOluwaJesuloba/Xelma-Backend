@@ -60,7 +60,7 @@ jobs:
         run: npm run build
 
       - name: Run database migrations
-        run: npx prisma migrate deploy
+        run: npm run db:migrate
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
@@ -136,7 +136,7 @@ jobs:
         run: npm run build
 
       - name: Run database migrations
-        run: npx prisma migrate deploy
+        run: npm run db:migrate
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
 

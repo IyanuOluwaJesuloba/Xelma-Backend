@@ -1,4 +1,5 @@
-import type { Config } from "jest";
+import type { Config } from "@jest/types";
+type JestConfig = Config.InitialOptions;
 
 const integrationTestFiles = [
   "auth.routes.spec.ts",
@@ -11,6 +12,7 @@ const integrationTestFiles = [
   "education-tip.route.spec.ts",
   "error-response-consistency.spec.ts",
   "errorHandler.spec.ts",
+  "hackathon-atomic-bets.spec.ts",
   "hackathon.http.spec.ts",
   "idempotency.spec.ts",
   "leaderboard-cache.spec.ts",
@@ -19,6 +21,7 @@ const integrationTestFiles = [
   "notifications.routes.spec.ts",
   "performance.spec.ts",
   "prediction-concurrency.spec.ts",
+  "tournament-concurrency.spec.ts",
   "predictions.routes.spec.ts",
   "rate-limit-visibility.spec.ts",
   "requestId.middleware.spec.ts",
@@ -30,10 +33,11 @@ const integrationTestFiles = [
   "socket.spec.ts",
   "user.routes.spec.ts",
   "validate.middleware.spec.ts",
+  "redis-adapter.spec.ts",
 ];
 
 // Base configuration shared between unit and integration tests
-const baseConfig: Partial<Config> = {
+const baseConfig: Partial<JestConfig> = {
   preset: "ts-jest",
   testEnvironment: "node",
   roots: ["<rootDir>/src"],
@@ -54,7 +58,7 @@ const baseConfig: Partial<Config> = {
 };
 
 // Unit tests - fast, no external dependencies
-const unitConfig: Config = {
+const unitConfig: JestConfig = {
   ...baseConfig,
   displayName: "unit",
   testMatch: [
@@ -69,7 +73,7 @@ const unitConfig: Config = {
 };
 
 // Integration tests - require PostgreSQL and services
-const integrationConfig: Config = {
+const integrationConfig: JestConfig = {
   ...baseConfig,
   displayName: "integration",
   testMatch: [
@@ -78,7 +82,7 @@ const integrationConfig: Config = {
   setupFiles: ["<rootDir>/jest.setup.js"],
 };
 
-const config: Config = {
+const config: JestConfig = {
   ...baseConfig,
   testMatch: ["**/*.spec.ts"],
   setupFiles: ["<rootDir>/jest.setup.js"],
@@ -107,12 +111,23 @@ const config: Config = {
     "/src/__mocks__/",
     "/src/tests/",
   ],
+  // Coverage floors, raised incrementally as under-covered modules gain
+  // tests (see src/tests/{challenge,payout,response,timeout-wrapper}*
+  // .spec.ts, added specifically to close gaps here). Lines/statements were
+  // the weakest floor relative to branches/functions, since money-path
+  // services had branch coverage from error-path tests but many pure
+  // utility modules had none at all.
+  //
+  // Follow-up plan: once round-scheduler.service, resolution.service, and
+  // the Soroban integration layer have direct unit tests (currently
+  // exercised only indirectly via route specs), raise this again toward
+  // lines/statements 50, functions 65, branches 75.
   coverageThreshold: {
     global: {
-      branches: 70,
-      functions: 50,
-      lines: 35,
-      statements: 35,
+      branches: 71,
+      functions: 51,
+      lines: 38,
+      statements: 38,
     },
   },
 };

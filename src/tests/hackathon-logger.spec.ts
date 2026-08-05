@@ -34,9 +34,9 @@ jest.mock('../services/hackathon.service', () => ({
   },
 }));
 
-jest.mock('../middleware/rateLimiter', () => {
+jest.mock('../middleware/rateLimiter.middleware', () => {
   const pass = (_req: any, _res: any, next: any) => next();
-  return { apiRateLimiter: pass, writeRateLimiter: pass, betRateLimiter: pass };
+  return { apiRateLimiter: pass, writeRateLimiter: pass, betRateLimiter: pass, adminRoundRateLimiter: pass, oracleResolveRateLimiter: pass, challengeRateLimiter: pass, connectRateLimiter: pass, authRateLimiter: pass, chatMessageRateLimiter: pass, predictionRateLimiter: pass, batchPredictionRateLimiter: pass, batchLeaderboardRateLimiter: pass };
 });
 
 // Prevent real Prisma / DB connection in unit tests

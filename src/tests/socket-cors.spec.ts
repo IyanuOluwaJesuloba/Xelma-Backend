@@ -66,7 +66,7 @@ describe("getCorsOrigins", () => {
     ]);
   });
 
-  it("should return wildcard in development when CLIENT_URL is not set", () => {
+  it("should allow all origins (true) in development when CLIENT_URL is not set", () => {
     setEnv({
       NODE_ENV: "development",
       CLIENT_URL: undefined,
@@ -76,7 +76,7 @@ describe("getCorsOrigins", () => {
     jest.resetModules();
 
     const { getCorsOrigins } = require("../socket");
-    expect(getCorsOrigins()).toBe("*");
+    expect(getCorsOrigins()).toBe(true);
   });
 
   it("should return CLIENT_URL in development when set", () => {

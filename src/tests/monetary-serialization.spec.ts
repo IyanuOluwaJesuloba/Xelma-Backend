@@ -96,9 +96,9 @@ describe("Monetary Field Serialization in API Responses", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(typeof res.body.balance).toBe("string");
-      expect(res.body.balance).toBe("1000.33333333");
-      expect(res.body.balance).not.toContain("$numberDecimal");
+      expect(typeof res.body.data.balance).toBe("string");
+      expect(res.body.data.balance).toBe("1000.33333333");
+      expect(res.body.data.balance).not.toContain("$numberDecimal");
     });
 
     it("returns profile balance as decimal string", async () => {
@@ -120,8 +120,8 @@ describe("Monetary Field Serialization in API Responses", () => {
         .set("Authorization", `Bearer ${token}`);
 
       expect(res.status).toBe(200);
-      expect(typeof res.body.profile.balance).toBe("string");
-      expect(res.body.profile.balance).toBe("42.00000001");
+      expect(typeof res.body.data.profile.balance).toBe("string");
+      expect(res.body.data.profile.balance).toBe("42.00000001");
     });
 
     it("returns user stats with decimal string earnings", async () => {
@@ -143,7 +143,7 @@ describe("Monetary Field Serialization in API Responses", () => {
         .set("Authorization", `Bearer ${token}`);
 
       expect(res.status).toBe(200);
-      const s = res.body.stats;
+      const s = res.body.data.stats;
       expect(typeof s.totalEarnings).toBe("string");
       expect(s.totalEarnings).toBe("99.12345678");
       expect(typeof s.upDownEarnings).toBe("string");

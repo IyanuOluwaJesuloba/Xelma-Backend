@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, jest } from '@jest/globals';
 import request from 'supertest';
+import { UserRole } from '@prisma/client';
+import { generateToken } from '../utils/jwt.util';
 
 // Mock Stellar and Soroban services to prevent loading @stellar/stellar-sdk (which contains ESM files that Jest fails to parse)
 jest.mock('../services/stellar.service', () => ({
@@ -17,6 +19,11 @@ jest.mock('../services/soroban.service', () => ({
 import app from '../app';
 
 describe('Hackathon HTTP Endpoints (Integration)', () => {
+  // Valid Stellar-format (G + 55 chars) used as authenticated betting wallet
+  // for the hackathon bet smoke tests below.
+  const hackerWallet = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+  const hackerToken = generateToken('hackathon-http-user', hackerWallet, UserRole.USER);
+
   afterAll(async () => {
     const { pool } = require('../db/db');
     await pool.end();
@@ -25,7 +32,8 @@ describe('Hackathon HTTP Endpoints (Integration)', () => {
     it('returns ok status and timestamp when soroban is initialized', async () => {
       const res = await request(app).get('/api/health');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual(
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toEqual(
         expect.objectContaining({
           status: 'ok',
           timestamp: expect.any(Number),
@@ -36,7 +44,7 @@ describe('Hackathon HTTP Endpoints (Integration)', () => {
     it('returns services block with price and soroban entries', async () => {
       const res = await request(app).get('/api/health');
       expect(res.status).toBe(200);
-      expect(res.body.services).toEqual(
+      expect(res.body.data.services).toEqual(
         expect.objectContaining({
           price: expect.objectContaining({
             status: 'ok',
@@ -57,14 +65,14 @@ describe('Hackathon HTTP Endpoints (Integration)', () => {
 
       const res = await request(app).get('/api/health');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual(
+      expect(res.body.data).toEqual(
         expect.objectContaining({
           status: 'degraded',
           timestamp: expect.any(Number),
         })
       );
-      expect(res.body.services.soroban.status).toBe('unavailable');
-      expect(res.body.services.soroban.initialized).toBe(false);
+      expect(res.body.data.services.soroban.status).toBe('unavailable');
+      expect(res.body.data.services.soroban.initialized).toBe(false);
     });
   });
 
@@ -168,56 +176,69 @@ describe('Hackathon HTTP Endpoints (Integration)', () => {
     });
   });
 
-  describe('POST /api/rounds/hackathon/up-down/:id/bet', () => {
+  describe('POST /api/rounds/hackathon/up-down/:id/bet (auth required)', () => {
+    it('returns 401 when no Authorization header is provided', async () => {
+      const res = await request(app)
+        .post('/api/rounds/hackathon/up-down/btc-updown-live/bet')
+        .send({ address: hackerWallet, amount: 100, side: 'UP' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('No token provided');
+    });
+
     it('records an up-down bet and matches success schema', async () => {
       const payload = {
-        address: 'GCQ2...MOCK', // Mock format for tests
+        address: hackerWallet,
         amount: 100,
         side: 'UP',
       };
-      // Note: validation might fail if address is not a strict Stellar address
-      // but if the test runs against a mock backend that skips it, it will pass.
       const res = await request(app)
-        .post('/api/rounds/hackathon/up-down/mock-round-id/bet')
+        .post('/api/rounds/hackathon/up-down/btc-updown-live/bet')
+        .set('Authorization', `Bearer ${hackerToken}`)
         .send(payload);
 
-      // If validation fails (e.g., 400 Bad Request due to address validation),
-      // we only assert the 400 shape. Ideally, we provide valid data.
-      if (res.status === 200) {
-        expect(res.body).toEqual(
-          expect.objectContaining({
-            success: true,
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(
+        expect.objectContaining({
+          success: true,
+          data: expect.objectContaining({
             message: expect.any(String),
-          })
-        );
-      } else {
-        expect(res.status).toBe(400); // Validation error
-        expect(res.body).toHaveProperty('error');
-      }
+          }),
+        })
+      );
     });
   });
 
-  describe('POST /api/rounds/hackathon/precision/:id/bet', () => {
+  describe('POST /api/rounds/hackathon/precision/:id/bet (auth required)', () => {
+    it('returns 401 when no Authorization header is provided', async () => {
+      const res = await request(app)
+        .post('/api/rounds/hackathon/precision/eth-precision-live/bet')
+        .send({ address: hackerWallet, amount: 50, predictedPrice: 65000.5 });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('No token provided');
+    });
+
     it('records a precision bet and matches success schema', async () => {
       const payload = {
-        address: 'GCQ2...MOCK',
+        address: hackerWallet,
         amount: 50,
         predictedPrice: 65000.5,
       };
       const res = await request(app)
-        .post('/api/rounds/hackathon/precision/mock-round-id/bet')
+        .post('/api/rounds/hackathon/precision/eth-precision-live/bet')
+        .set('Authorization', `Bearer ${hackerToken}`)
         .send(payload);
 
-      if (res.status === 200) {
-        expect(res.body).toEqual(
-          expect.objectContaining({
-            success: true,
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(
+        expect.objectContaining({
+          success: true,
+          data: expect.objectContaining({
             message: expect.any(String),
-          })
-        );
-      } else {
-        expect(res.status).toBe(400);
-      }
+          }),
+        })
+      );
     });
   });
 
@@ -228,16 +249,19 @@ describe('Hackathon HTTP Endpoints (Integration)', () => {
       const res = await request(app).get(`/api/user/${validStellarAddress}/stats`);
       
       expect(res.status).toBe(200);
-      expect(res.body).toEqual(
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toEqual(
         expect.objectContaining({
-          address: expect.any(String),
-          balance: expect.any(Number),
-          pendingWinnings: expect.any(Number),
-          totalWins: expect.any(Number),
-          totalLosses: expect.any(Number),
-          currentStreak: expect.any(Number),
-          xp: expect.any(Number),
-          rankTitle: expect.any(String),
+          stats: expect.objectContaining({
+            totalWins: expect.any(Number),
+            totalLosses: expect.any(Number),
+            pendingWinnings: expect.any(String),
+          }),
+          profile: expect.objectContaining({
+            balance: expect.any(Number),
+            xp: expect.any(Number),
+            rankTitle: expect.any(String),
+          }),
         })
       );
     });

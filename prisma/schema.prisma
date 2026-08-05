@@ -63,7 +63,7 @@ enum DispatchStatus {
   ABANDONED
 }
 
-/// Outbox event type — mirrors DispatchChannel but lives on the outbox
+/// Outbox event type â€” mirrors DispatchChannel but lives on the outbox
 /// model so the two concerns (outbox vs. DLQ) stay independent.
 enum OutboxEventType {
   NOTIFICATION_CREATE
@@ -71,10 +71,10 @@ enum OutboxEventType {
 }
 
 /// Outbox event status lifecycle:
-///   PENDING   → picked up by the poller
-///   PROCESSING → poller is actively dispatching (prevents double-dispatch)
-///   PROCESSED  → successfully dispatched; eligible for cleanup
-///   FAILED     → all retry attempts exhausted; escalated to DLQ
+///   PENDING   â†’ picked up by the poller
+///   PROCESSING â†’ poller is actively dispatching (prevents double-dispatch)
+///   PROCESSED  â†’ successfully dispatched; eligible for cleanup
+///   FAILED     â†’ all retry attempts exhausted; escalated to DLQ
 enum OutboxEventStatus {
   PENDING
   PROCESSING
@@ -354,8 +354,8 @@ model FailedDispatch {
 /// the in-process notification call.
 ///
 /// Storage notes:
-///   - `aggregateId` is the business entity id (roundId, predictionId, …).
-///   - `aggregateType` is a short label ("round", "prediction", …).
+///   - `aggregateId` is the business entity id (roundId, predictionId, â€¦).
+///   - `aggregateType` is a short label ("round", "prediction", â€¦).
 ///   - `payload` is the full data needed to reconstruct the dispatch.
 ///   - `attempts` starts at 0 and is incremented on each dispatch attempt.
 ///   - `processedAt` is set when status transitions to PROCESSED.
@@ -486,6 +486,18 @@ model MockLeaderboard {
   winStreak   Int
   xp          Int
   rankTitle   String
+  balance         Int    @default(1000)
+  pendingWinnings Int    @default(0)
+}
+
+model MockBet {
+  id             Int      @id @default(autoincrement())
+  roundId        String
+  address        String
+  amount         Float
+  side           String?
+  predictedPrice Float?
+  createdAt      DateTime @default(now())
 }
 
 model MockPlatformStat {

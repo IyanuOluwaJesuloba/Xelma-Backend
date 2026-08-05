@@ -22,6 +22,11 @@ import { challengeSchema, connectSchema } from "../schemas/auth.schema";
 import { AuthenticationError, ErrorCode } from "../utils/errors";
 import { auditLogger } from "../utils/audit-logger";
 
+/**
+ * Wallet auth challenge/connect/verify routes.
+ * Mounted on both the production (`index.ts`) and hackathon (`app.ts`) apps
+ * so hackathon clients can obtain JWTs without switching servers (#400).
+ */
 const router = Router();
 
 /**

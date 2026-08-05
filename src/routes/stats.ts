@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { getRepositories } from "../repositories";
 import { sendSuccess, sendError } from "../utils/response";
+import logger from "../utils/logger";
 
 const router = Router();
 
@@ -42,17 +43,24 @@ const router = Router();
  *
  * Cache TTL: 30 seconds (in-process).
  *
- * Fallback mode: when the data store is empty or unreachable, the response
- * still returns 200 with `"isFallback": true` so the landing page never
- * receives an error.  See src/data/mockData.ts for the documented fallback
- * constants and when to expect them.
+ * Behaviour:
+ *   DATA_MODE=mock            → returns MOCK_PLATFORM_STATS with isFallback=true
+ *   DATA_MODE=live (or unset) → queries the database:
+ *     • DB has data           → live counts with isFallback=false
+ *     • DB empty              → zero counts with isFallback=false
+ *     • DB unreachable        → MOCK_PLATFORM_STATS with isFallback=true
+ *
+ * An empty production database returns legitimate zeros (isFallback=false)
+ * so dashboards can distinguish "no data yet" from mock constants.
  */
 router.get("/", async (_req: Request, res: Response) => {
   try {
     const stats = await getRepositories().stats.getPlatformStats();
     return sendSuccess(res, stats);
   } catch (err) {
-    console.error("[GET /api/stats] Unexpected error:", err);
+    logger.error("[GET /api/stats] Unexpected error:", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return sendError(res, "Failed to retrieve platform stats.", 500);
   }
 });

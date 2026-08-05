@@ -1,5 +1,6 @@
 import path from 'path';
 import swaggerJSDoc from 'swagger-jsdoc';
+import { sharedComponents } from './shared-components';
 
 const PORT = process.env.PORT || 3001;
 const API_BASE_URL = process.env.API_BASE_URL || `http://localhost:${PORT}`;
@@ -10,23 +11,85 @@ export const hackathonSwaggerSpec = swaggerJSDoc({
     info: {
       title: 'Xelma Hackathon API',
       description:
-        'Hackathon/demo API for price widgets, mock rounds, leaderboard, and platform stats. Use Swagger UI to explore endpoints.',
+        'Hackathon/demo API for wallet auth, price widgets, mock rounds, leaderboard, and platform stats. Use Swagger UI to explore endpoints.',
       version: '1.0.0',
     },
     servers: [{ url: API_BASE_URL }],
     components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description: 'Paste a JWT like: Bearer <token>',
+        },
+      },
       schemas: {
-        ErrorResponse: {
+        AuthChallengeRequest: {
           type: 'object',
           properties: {
-            error: { type: 'string' },
-            message: { type: 'string' },
-            code: { type: 'string' },
-            requestId: { type: 'string' },
-            timestamp: { type: 'string', format: 'date-time' },
+            walletAddress: {
+              type: 'string',
+              description: 'Stellar wallet public key (G...)',
+              example: 'GBRPYHIL2C2V3F5YQZ4H6J7K8L9M0N1O2P3Q4R5S6T7U8V9W0X1Y2Z3A4B',
+            },
           },
-          required: ['error', 'message', 'code'],
+          required: ['walletAddress'],
+          additionalProperties: false,
         },
+        AuthChallengeResponse: {
+          type: 'object',
+          properties: {
+            challenge: { type: 'string', example: 'random-challenge-string' },
+            expiresAt: { type: 'string', format: 'date-time' },
+          },
+          required: ['challenge', 'expiresAt'],
+          additionalProperties: false,
+        },
+        AuthConnectRequest: {
+          type: 'object',
+          properties: {
+            walletAddress: { type: 'string', description: 'Stellar wallet public key (G...)' },
+            challenge: { type: 'string', description: 'Challenge previously returned from /challenge' },
+            signature: { type: 'string', description: 'Signature over the challenge' },
+          },
+          required: ['walletAddress', 'challenge', 'signature'],
+          additionalProperties: false,
+        },
+        AuthConnectResponse: {
+          type: 'object',
+          properties: {
+            token: { type: 'string', description: 'JWT access token' },
+            user: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                walletAddress: { type: 'string' },
+                createdAt: { type: 'string', format: 'date-time' },
+                lastLoginAt: { type: 'string', format: 'date-time' },
+              },
+              required: ['id', 'walletAddress', 'createdAt', 'lastLoginAt'],
+              additionalProperties: true,
+            },
+          },
+          required: ['token', 'user'],
+          additionalProperties: false,
+        },
+        // ── Shared base (re-declared via allOf with hackathon-specific fields) ──
+        ErrorResponse: {
+          allOf: [
+            { $ref: '#/components/schemas/BaseErrorResponse' },
+            {
+              type: 'object',
+              properties: {
+                requestId: { type: 'string' },
+                timestamp: { type: 'string', format: 'date-time' },
+              },
+            },
+          ],
+        },
+        // ── Shared base schema (imported from shared-components) ──
+        ...sharedComponents.schemas,
         NotFoundResponse: {
           type: 'object',
           properties: {
@@ -37,6 +100,8 @@ export const hackathonSwaggerSpec = swaggerJSDoc({
         },
         PriceResponse: {
           type: 'object',
+          description:
+            'Multi-asset ticker payload inside the success envelope from GET /api/prices. The hackathon app does not expose GET /api/price (that path is production-only XLM oracle).',
           properties: {
             BTC: { type: 'number', example: 67420.12 },
             ETH: { type: 'number', example: 3241.55 },
@@ -144,15 +209,22 @@ export const hackathonSwaggerSpec = swaggerJSDoc({
       },
     },
     tags: [
+      { name: 'auth', description: 'Wallet authentication and JWT issuance' },
       { name: 'health', description: 'Service health checks' },
-      { name: 'prices', description: 'Live crypto prices (CoinGecko)' },
+      {
+        name: 'prices',
+        description:
+          'Multi-asset live crypto prices via GET /api/prices (CoinGecko). Not the same as production GET /api/price (XLM oracle).',
+      },
       { name: 'stats', description: 'Platform statistics' },
       { name: 'rounds', description: 'Mock prediction rounds' },
       { name: 'leaderboard', description: 'Mock leaderboard data' },
       { name: 'tournaments', description: 'Tournament listings and join' },
+      { name: 'observability', description: 'Prometheus metrics and readiness probes' },
     ],
   },
   apis: [
+    path.join(process.cwd(), 'src/routes/auth.routes.ts'),
     path.join(process.cwd(), 'src/routes/health.ts'),
     path.join(process.cwd(), 'src/routes/index.ts'),
     path.join(process.cwd(), 'src/routes/stats.ts'),

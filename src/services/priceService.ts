@@ -1,11 +1,9 @@
-import axios from 'axios';
 import { mockData } from '../data/mockData';
 import config from '../config';
 import logger from '../utils/logger';
-
-const COINGECKO_URL =
-  process.env.COINGECKO_MULTI_PRICE_URL ??
-  'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,stellar&vs_currencies=usd';
+import { toNumber } from '../utils/decimal.util';
+import { AssetPriceSet, PriceProvider } from './price-provider.interface';
+import { createDefaultProviders } from './providers';
 
 const CACHE_TTL_MS = 30_000;
 
@@ -23,6 +21,15 @@ interface CacheEntry {
 }
 
 let cache: CacheEntry | null = null;
+let providers: PriceProvider[] | null = null;
+
+/** Lazily built so config/env overrides are picked up at first use, not import time. */
+function getProviders(): PriceProvider[] {
+  if (!providers) {
+    providers = createDefaultProviders();
+  }
+  return providers;
+}
 
 function getMockPrices(): PriceResponse {
   const btc = mockData.prices.find((p) => p.symbol === 'btc')?.price ?? 60_000;
@@ -37,22 +44,13 @@ function getMockPrices(): PriceResponse {
   };
 }
 
-function mapCoinGeckoResponse(data: Record<string, { usd?: number }>): PriceResponse {
-  const btc = data.bitcoin?.usd;
-  const eth = data.ethereum?.usd;
-  const xlm = data.stellar?.usd;
-
-  if (btc == null || eth == null || xlm == null) {
-    throw new Error('CoinGecko response missing required price fields');
-  }
-
-  const now = new Date().toISOString();
+function toPriceResponse(assetPrices: AssetPriceSet): PriceResponse {
   return {
-    BTC: btc,
-    ETH: eth,
-    XLM: xlm,
+    BTC: toNumber(assetPrices.BTC),
+    ETH: toNumber(assetPrices.ETH),
+    XLM: toNumber(assetPrices.XLM),
     stale: false,
-    lastUpdatedAt: now,
+    lastUpdatedAt: new Date().toISOString(),
   };
 }
 
@@ -60,11 +58,27 @@ function withStaleFlag(data: PriceResponse): PriceResponse {
   return { ...data, stale: true };
 }
 
-async function fetchFromCoinGecko(): Promise<PriceResponse> {
-  const response = await axios.get<Record<string, { usd?: number }>>(COINGECKO_URL, {
-    timeout: 5_000,
-  });
-  return mapCoinGeckoResponse(response.data);
+/**
+ * Fetch BTC/ETH/XLM using the same provider chain and failover order as the
+ * settlement oracle (CoinGecko primary, CoinCap fallback), so both surfaces
+ * share one Decimal-safe provider stack.
+ */
+async function fetchAssetPricesWithFailover(): Promise<AssetPriceSet> {
+  let lastError: unknown;
+
+  for (const provider of getProviders()) {
+    try {
+      return await provider.fetchAssetPrices();
+    } catch (err) {
+      lastError = err;
+      logger.warn(`Multi-asset price fetch failed for provider ${provider.name}, trying next`, {
+        provider: provider.name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('All configured price providers failed');
 }
 
 /** Reset in-memory cache (for tests). */
@@ -84,11 +98,12 @@ export const getPrices = async (): Promise<PriceResponse> => {
   }
 
   try {
-    const fresh = await fetchFromCoinGecko();
+    const assetPrices = await fetchAssetPricesWithFailover();
+    const fresh = toPriceResponse(assetPrices);
     cache = { data: fresh, fetchedAt: now };
     return fresh;
   } catch (err) {
-    logger.warn('CoinGecko price fetch failed', {
+    logger.warn('All multi-asset price providers failed', {
       error: err instanceof Error ? err.message : String(err),
       hasCache: Boolean(cache),
     });

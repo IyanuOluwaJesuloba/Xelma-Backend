@@ -1,9 +1,16 @@
-import { Server as SocketIOServer } from 'socket.io';
 import { DispatchChannel } from '@prisma/client';
 import logger from '../utils/logger';
 import deadLetterQueueService from './dead-letter-queue.service';
 import { websocketEmitsTotal } from '../metrics/application.metrics';
 import { prisma } from '../lib/prisma';
+import type {
+  BetAcceptedPayload,
+  ServerToClientEvents,
+  TypedServer,
+} from '../types/socket-events';
+import type { ChatMessage } from '../types/chat.types';
+
+export type { BetAcceptedPayload };
 
 /**
  * Centralized event names so DLQ replay can map a stored `eventName` back
@@ -25,27 +32,20 @@ export const WebSocketEvents = {
 export type WebSocketEventName =
   (typeof WebSocketEvents)[keyof typeof WebSocketEvents];
 
-/** Payload for live bet acceptance broadcasts (Issue #376). */
-export interface BetAcceptedPayload {
-  roundId?: string;
-  address: string;
-  amount: number;
-  side?: 'UP' | 'DOWN';
-  mode: 'UP_DOWN' | 'PRECISION';
-  state: string;
-  txHash?: string;
-}
+type EventPayloadMap = {
+  [K in keyof ServerToClientEvents]: Parameters<ServerToClientEvents[K]>[0];
+};
 
-interface SafeEmitInput {
+interface SafeEmitInput<E extends WebSocketEventName> {
   room: string;
-  event: WebSocketEventName;
-  payload: any;
+  event: E;
+  payload: EventPayloadMap[E];
   userId?: string | null;
 }
 
 export class WebSocketService {
   private static _singleton = new WebSocketService();
-  private io: SocketIOServer | null = null;
+  private io: TypedServer | null = null;
 
   static get instance(): WebSocketService {
     return WebSocketService._singleton;
@@ -62,7 +62,7 @@ export class WebSocketService {
   /**
    * Initialize the WebSocket service with Socket.IO instance
    */
-  initialize(io: SocketIOServer): void {
+  initialize(io: TypedServer): void {
     this.io = io;
     logger.info("WebSocket service initialized");
   }
@@ -70,7 +70,7 @@ export class WebSocketService {
   /**
    * Get the Socket.IO instance
    */
-  getIO(): SocketIOServer | null {
+  getIO(): TypedServer | null {
     return this.io;
   }
 
@@ -80,11 +80,10 @@ export class WebSocketService {
    * replayed (Issue #193). Never throws — emits are fire-and-forget on the
    * caller's hot path.
    */
-  private safeEmit(input: SafeEmitInput): void {
+  private safeEmit<E extends WebSocketEventName>(input: SafeEmitInput<E>): void {
     if (!this.io) {
       logger.warn(`WebSocket not initialized, cannot emit ${input.event}`);
       websocketEmitsTotal.inc({ event: input.event, outcome: 'unavailable' });
-      // fire-and-forget — DLQ helper swallows its own errors
       void deadLetterQueueService.record({
         channel: DispatchChannel.WEBSOCKET_EMIT,
         eventName: input.event,
@@ -96,7 +95,7 @@ export class WebSocketService {
     }
 
     try {
-      this.io.to(input.room).emit(input.event, input.payload);
+      (this.io.to(input.room).emit as any)(input.event, input.payload);
       websocketEmitsTotal.inc({ event: input.event, outcome: 'success' });
     } catch (err) {
       logger.error(`Failed to emit ${input.event}`, { error: err });
@@ -131,12 +130,9 @@ export class WebSocketService {
     if (!room) {
       throw new Error('Missing room for websocket replay');
     }
-    this.io.to(room).emit(eventName, data);
+    (this.io.to(room).emit as (event: string, data: unknown) => void)(eventName, data);
   }
 
-  /**
-   * Emit event when a new round starts
-   */
   /**
    * Emit event when a new round starts
    */

@@ -23,6 +23,59 @@ export interface IdempotencyCheckResult {
    error?: string;
 }
 
+export const IDEMPOTENCY_STORE_UNAVAILABLE = 'IDEMPOTENCY_STORE_UNAVAILABLE';
+
+export class IdempotencyStoreUnavailableError extends Error {
+   readonly code = IDEMPOTENCY_STORE_UNAVAILABLE;
+
+   constructor() {
+      super('Idempotency store unavailable');
+      this.name = 'IdempotencyStoreUnavailableError';
+   }
+}
+
+interface InMemoryIdempotencyRecord {
+   requestHash: string;
+   responseStatus: number;
+   responseBody: any;
+   expiresAt: Date;
+}
+
+const inMemoryIdempotencyStore = new Map<string, InMemoryIdempotencyRecord>();
+
+function usesInMemoryStore(): boolean {
+   return (
+      process.env.DATA_STORE === 'memory' ||
+      (process.env.DATA_STORE === undefined && process.env.DATA_MODE === 'mock') ||
+      process.env.BET_STUB_MODE === 'true'
+   );
+}
+
+function getStoreKey(userId: string, endpoint: string, idempotencyKey: string): string {
+   return `${userId}:${endpoint}:${idempotencyKey}`;
+}
+
+function getMemoryRecord(
+   userId: string,
+   endpoint: string,
+   idempotencyKey: string,
+): InMemoryIdempotencyRecord | undefined {
+   const key = getStoreKey(userId, endpoint, idempotencyKey);
+   const record = inMemoryIdempotencyStore.get(key);
+   if (record && record.expiresAt < new Date()) {
+      inMemoryIdempotencyStore.delete(key);
+      return undefined;
+   }
+   return record;
+}
+
+function toCachedResponse(record: InMemoryIdempotencyRecord) {
+   return {
+      status: record.responseStatus,
+      body: record.responseBody,
+   };
+}
+
 /**
  * Default configuration
  */
@@ -85,10 +138,26 @@ export async function checkIdempotency(
    requestBody: any,
    config: IdempotencyConfig = {}
 ): Promise<IdempotencyCheckResult> {
-   try {
-      // Hash the request body to detect mutations
-      const requestHash = hashRequestBody(requestBody);
+   const requestHash = hashRequestBody(requestBody);
 
+   if (usesInMemoryStore()) {
+      const existing = getMemoryRecord(userId, endpoint, idempotencyKey);
+      if (!existing) return { isIdempotent: false };
+
+      if (existing.requestHash !== requestHash) {
+         return {
+            isIdempotent: true,
+            error: 'Idempotency key reused with different request body',
+         };
+      }
+
+      return {
+         isIdempotent: true,
+         cachedResponse: toCachedResponse(existing),
+      };
+   }
+
+   try {
       // Look for existing idempotency key
       const existing = await prisma.idempotencyKey.findUnique({
          where: {
@@ -159,8 +228,10 @@ export async function checkIdempotency(
          idempotencyKey,
       });
 
-      // On error, allow request to proceed (fail open)
-      return { isIdempotent: false };
+      return {
+         isIdempotent: true,
+         error: IDEMPOTENCY_STORE_UNAVAILABLE,
+      };
    }
 }
 
@@ -194,15 +265,28 @@ export async function storeIdempotencyResult(
    responseBody: any,
    config: IdempotencyConfig = {}
 ): Promise<void> {
-   try {
-      const requestHash = hashRequestBody(requestBody);
-      const ttlMinutes =
-         config.ttlMinutes ??
-         (config.ttlHours !== undefined
-            ? config.ttlHours * 60
-            : DEFAULT_CONFIG.ttlMinutes!);
-      const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+   const requestHash = hashRequestBody(requestBody);
+   const ttlMinutes =
+      config.ttlMinutes ??
+      (config.ttlHours !== undefined
+         ? config.ttlHours * 60
+         : DEFAULT_CONFIG.ttlMinutes!);
+   const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
 
+   if (usesInMemoryStore()) {
+      inMemoryIdempotencyStore.set(
+         getStoreKey(userId, endpoint, idempotencyKey),
+         {
+            requestHash,
+            responseStatus,
+            responseBody,
+            expiresAt,
+         },
+      );
+      return;
+   }
+
+   try {
       // Upsert idempotency key (update if exists, create if not)
       await prisma.idempotencyKey.upsert({
          where: {
@@ -244,7 +328,7 @@ export async function storeIdempotencyResult(
          idempotencyKey,
       });
 
-      // Don't throw - idempotency is best-effort
+      throw new IdempotencyStoreUnavailableError();
    }
 }
 
@@ -259,6 +343,18 @@ export async function storeIdempotencyResult(
  * logger.info(`Cleaned up ${deleted} expired idempotency keys`);
  */
 export async function cleanupExpiredIdempotencyKeys(): Promise<number> {
+   if (usesInMemoryStore()) {
+      const now = new Date();
+      let deleted = 0;
+      for (const [key, record] of inMemoryIdempotencyStore) {
+         if (record.expiresAt < now) {
+            inMemoryIdempotencyStore.delete(key);
+            deleted++;
+         }
+      }
+      return deleted;
+   }
+
    try {
       const result = await prisma.idempotencyKey.deleteMany({
          where: {
@@ -311,10 +407,62 @@ export async function acquireIdempotencyLock(
    requestBody: any,
    ttlHours: number = 24
 ): Promise<IdempotencyCheckResult & { lockAcquired?: boolean }> {
-   try {
-      const requestHash = hashRequestBody(requestBody);
-      const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
+   const requestHash = hashRequestBody(requestBody);
+   const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000);
 
+   if (usesInMemoryStore()) {
+      const key = getStoreKey(userId, endpoint, idempotencyKey);
+      const existing = getMemoryRecord(userId, endpoint, idempotencyKey);
+
+      if (existing) {
+         if (existing.responseStatus === 102) {
+            let attempts = 0;
+            while (attempts < 20) {
+               await new Promise(resolve => setTimeout(resolve, 250));
+               const current = getMemoryRecord(userId, endpoint, idempotencyKey);
+               if (current && current.responseStatus !== 102) {
+                  if (current.requestHash !== requestHash) {
+                     return {
+                        isIdempotent: true,
+                        error: 'Idempotency key reused with different request body',
+                     };
+                  }
+                  return {
+                     isIdempotent: true,
+                     cachedResponse: toCachedResponse(current),
+                  };
+               }
+               attempts++;
+            }
+            return {
+               isIdempotent: true,
+               error: 'A request with this idempotency key is already in progress.',
+            };
+         }
+
+         if (existing.requestHash !== requestHash) {
+            return {
+               isIdempotent: true,
+               error: 'Idempotency key reused with different request body',
+            };
+         }
+
+         return {
+            isIdempotent: true,
+            cachedResponse: toCachedResponse(existing),
+         };
+      }
+
+      inMemoryIdempotencyStore.set(key, {
+         requestHash,
+         responseStatus: 102,
+         responseBody: {},
+         expiresAt,
+      });
+      return { isIdempotent: false, lockAcquired: true };
+   }
+
+   try {
       // 1. Try to fetch existing key
       const existing = await prisma.idempotencyKey.findUnique({
          where: {
@@ -417,8 +565,10 @@ export async function acquireIdempotencyLock(
          endpoint,
          idempotencyKey,
       });
-      // Fallback: allow proceeding on DB errors
-      return { isIdempotent: false };
+      return {
+         isIdempotent: true,
+         error: IDEMPOTENCY_STORE_UNAVAILABLE,
+      };
    }
 }
 
@@ -431,6 +581,15 @@ export async function releaseIdempotencyLock(
    endpoint: string,
    idempotencyKey: string
 ): Promise<void> {
+   if (usesInMemoryStore()) {
+      const key = getStoreKey(userId, endpoint, idempotencyKey);
+      const existing = inMemoryIdempotencyStore.get(key);
+      if (existing?.responseStatus === 102) {
+         inMemoryIdempotencyStore.delete(key);
+      }
+      return;
+   }
+
    try {
       await prisma.idempotencyKey.deleteMany({
          where: {

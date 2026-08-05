@@ -75,19 +75,19 @@ describe("Tournament listing (#378)", () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(Array.isArray(res.body.data)).toBe(true);
-      expect(res.body.pagination).toEqual({
+      expect(res.body.meta.pagination).toEqual({
         limit: 10,
         offset: 0,
         total: expect.any(Number),
       });
-      expect(res.body.pagination.total).toBe(MOCK_TOURNAMENTS.length);
+      expect(res.body.meta.pagination.total).toBe(MOCK_TOURNAMENTS.length);
     });
 
     it("filters by mode=UP_DOWN", async () => {
       const res = await request(app).get("/api/tournaments?mode=UP_DOWN");
       expect(res.status).toBe(200);
       expect(res.body.data.every((t: any) => t.mode === "UP_DOWN")).toBe(true);
-      expect(res.body.pagination.total).toBe(2);
+      expect(res.body.meta.pagination.total).toBe(2);
     });
 
     it("filters by mode=LEGENDS", async () => {
@@ -95,14 +95,14 @@ describe("Tournament listing (#378)", () => {
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveLength(1);
       expect(res.body.data[0].mode).toBe("LEGENDS");
-      expect(res.body.pagination.total).toBe(1);
+      expect(res.body.meta.pagination.total).toBe(1);
     });
 
     it("filters by status=ACTIVE", async () => {
       const res = await request(app).get("/api/tournaments?status=ACTIVE");
       expect(res.status).toBe(200);
       expect(res.body.data.every((t: any) => t.status === "ACTIVE")).toBe(true);
-      expect(res.body.pagination.total).toBe(1);
+      expect(res.body.meta.pagination.total).toBe(1);
     });
 
     it("supports mode + status together", async () => {
@@ -116,7 +116,7 @@ describe("Tournament listing (#378)", () => {
         mode: "UP_DOWN",
         status: "COMPLETED",
       });
-      expect(res.body.pagination).toEqual({
+      expect(res.body.meta.pagination).toEqual({
         limit: 20,
         offset: 0,
         total: 1,
@@ -141,7 +141,7 @@ describe("Tournament listing (#378)", () => {
       );
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveLength(1);
-      expect(res.body.pagination).toEqual({
+      expect(res.body.meta.pagination).toEqual({
         limit: 1,
         offset: 1,
         total: 2,

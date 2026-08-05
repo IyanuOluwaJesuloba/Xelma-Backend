@@ -20,6 +20,7 @@ import {
   stellarAddressSchema,
   optionalStellarAddressSchema,
   validateStellarAddressParam,
+  createStellarAddressSchema,
 } from '../utils/stellar-address.util';
 import { ValidationError, ErrorCode } from '../utils/errors';
 
@@ -125,5 +126,101 @@ describe('validateStellarAddressParam (route guard)', () => {
     const next = run({ walletAddress: ADDR }, 'walletAddress');
     expect(next).toHaveBeenCalledTimes(1);
     expect(next.mock.calls[0]).toHaveLength(0);
+  });
+
+  // ── Negative / edge-case tests ──────────────────────────────────────────
+
+  it('rejects null param value with 400', () => {
+    const next = run({ address: null }, 'address');
+    const err = next.mock.calls[0][0] as ValidationError;
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.statusCode).toBe(400);
+    expect(err.details?.[0].field).toBe('address');
+  });
+
+  it('rejects undefined param value with 400', () => {
+    const next = run({ address: undefined }, 'address');
+    const err = next.mock.calls[0][0] as ValidationError;
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.statusCode).toBe(400);
+    expect(err.details?.[0].field).toBe('address');
+  });
+
+  it('rejects a numeric address-like value with 400', () => {
+    const next = run({ address: 123456 }, 'address');
+    const err = next.mock.calls[0][0] as ValidationError;
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.statusCode).toBe(400);
+  });
+
+  it('rejects a non-G-prefixed 56-char string with 400', () => {
+    // Exactly 56 characters but starts with 'A' instead of 'G'
+    const badAddr = 'ABRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H';
+    mockIsValidEd25519.mockReturnValue(false);
+    const next = run({ address: badAddr });
+    const err = next.mock.calls[0][0] as ValidationError;
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.statusCode).toBe(400);
+  });
+
+  it('rejects a string with special characters with 400', () => {
+    const next = run({ address: 'G<script>alert(1)</script>' });
+    const err = next.mock.calls[0][0] as ValidationError;
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.statusCode).toBe(400);
+  });
+
+  it('does not call StrKey validator when param is missing (empty string)', () => {
+    const next = run({ address: '' }, 'address');
+    const err = next.mock.calls[0][0] as ValidationError;
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.statusCode).toBe(400);
+    // StrKey is never called because isValidStellarAddress returns false for empty strings early
+  });
+});
+
+describe('createStellarAddressSchema (factory)', () => {
+  it('creates a schema that accepts a valid address', () => {
+    mockIsValidEd25519.mockReturnValue(true);
+    const schema = createStellarAddressSchema('walletAddress');
+    const parsed = schema.safeParse(ADDR);
+    expect(parsed.success).toBe(true);
+  });
+
+  it('uses the custom field name in the "required" error message', () => {
+    const schema = createStellarAddressSchema('walletAddress');
+    const parsed = schema.safeParse('');
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0].message).toBe('walletAddress is required');
+    }
+  });
+
+  it('uses the custom field name in the "invalid" error message', () => {
+    mockIsValidEd25519.mockReturnValue(false);
+    const schema = createStellarAddressSchema('publicKey');
+    const parsed = schema.safeParse('bad-key');
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0].message).toBe('Invalid Stellar wallet address format');
+    }
+  });
+
+  it('defaults field name to "address" when called without arguments', () => {
+    const schema = createStellarAddressSchema();
+    const parsed = schema.safeParse('');
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0].message).toBe('address is required');
+    }
+  });
+
+  it('rejects non-string input with the custom field name', () => {
+    const schema = createStellarAddressSchema('walletAddress');
+    const parsed = schema.safeParse(42);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0].message).toBe('walletAddress is required');
+    }
   });
 });

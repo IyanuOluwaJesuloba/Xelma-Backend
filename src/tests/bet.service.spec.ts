@@ -23,6 +23,8 @@ jest.mock("../services/bet-audit.service", () => ({
   __esModule: true,
   default: {
     emitBetAccepted: jest.fn(),
+    emitBetFailed: jest.fn(),
+    emitBetReconciled: jest.fn(),
   },
 }));
 
@@ -61,7 +63,11 @@ describe("BetService - mode selection", () => {
         side: "UP",
       });
 
-      expect(result).toEqual({ state: "stub" });
+      expect(result).toEqual({
+        state: "stub",
+        betId: expect.any(String),
+        status: "STUB",
+      });
       expect(sorobanService.placeBet).not.toHaveBeenCalled();
       expect(betAuditService.emitBetAccepted).toHaveBeenCalledWith(
         expect.objectContaining({ mode: "UP_DOWN", result: "stub" })
@@ -81,7 +87,12 @@ describe("BetService - mode selection", () => {
         side: "DOWN",
       });
 
-      expect(result).toEqual({ state: "on-chain-success", txHash: "0xabc" });
+      expect(result).toEqual({
+        state: "on-chain-success",
+        txHash: "0xabc",
+        betId: expect.any(String),
+        status: "CONFIRMED",
+      });
       expect(sorobanService.placeBet).toHaveBeenCalledWith(VALID_ADDRESS, 10, "DOWN");
       expect(betAuditService.emitBetAccepted).toHaveBeenCalledWith(
         expect.objectContaining({ mode: "UP_DOWN", result: "on-chain-success" })
@@ -120,7 +131,11 @@ describe("BetService - mode selection", () => {
         predictedPrice: 0.12,
       });
 
-      expect(result).toEqual({ state: "stub" });
+      expect(result).toEqual({
+        state: "stub",
+        betId: expect.any(String),
+        status: "STUB",
+      });
       expect(sorobanService.placePrecisionBet).not.toHaveBeenCalled();
       expect(betAuditService.emitBetAccepted).toHaveBeenCalledWith(
         expect.objectContaining({ mode: "PRECISION", result: "stub" })
@@ -140,7 +155,12 @@ describe("BetService - mode selection", () => {
         predictedPrice: 0.12,
       });
 
-      expect(result).toEqual({ state: "on-chain-success", txHash: "0x789" });
+      expect(result).toEqual({
+        state: "on-chain-success",
+        txHash: "0x789",
+        betId: expect.any(String),
+        status: "CONFIRMED",
+      });
       expect(sorobanService.placePrecisionBet).toHaveBeenCalledWith(VALID_ADDRESS, 5, 0.12);
       expect(betAuditService.emitBetAccepted).toHaveBeenCalledWith(
         expect.objectContaining({ mode: "PRECISION", result: "on-chain-success" })

@@ -67,4 +67,28 @@ describe('priceService', () => {
     expect(prices.stale).toBe(true);
     expect(prices.lastUpdatedAt).toBeNull();
   });
+
+  it('fails over to CoinCap when CoinGecko is down', async () => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (String(url).includes('coingecko')) {
+        return Promise.reject(new Error('CoinGecko down'));
+      }
+      return Promise.resolve({
+        data: {
+          data: [
+            { id: 'bitcoin', priceUsd: '67001' },
+            { id: 'ethereum', priceUsd: '3202' },
+            { id: 'stellar', priceUsd: '0.29' },
+          ],
+        },
+      });
+    });
+
+    const prices = await getPrices();
+
+    expect(prices.BTC).toBe(67_001);
+    expect(prices.ETH).toBe(3_202);
+    expect(prices.XLM).toBe(0.29);
+    expect(prices.stale).toBe(false);
+  });
 });

@@ -179,7 +179,9 @@ router.post('/rate-limits/clear', requireAdmin, async (req: Request, res: Respon
  *             schema:
  *               type: string
  */
-router.get(['/metrics', '/admin/metrics/metrics'], async (req: Request, res: Response) => {
+// Path is relative to the /api/admin/metrics mount point. Listing the full
+// path here as well produced /api/admin/metrics/admin/metrics/metrics.
+router.get('/metrics', async (req: Request, res: Response) => {
   try {
     res.set('Content-Type', register.contentType);
     res.end(await register.metrics());
@@ -207,7 +209,7 @@ router.get(['/metrics', '/admin/metrics/metrics'], async (req: Request, res: Res
  *             schema:
  *               type: object
  */
-router.get(['/rate-limit-summary', '/admin/metrics/rate-limit-summary'], requireAdmin, async (req: Request, res: Response) => {
+router.get('/rate-limit-summary', requireAdmin, async (req: Request, res: Response) => {
   try {
     const metric = register.getSingleMetric('http_rate_limit_hits_total');
     const values = metric ? (await metric.get()).values : [];

@@ -55,6 +55,15 @@ const MOCK_DATA_ROUNDS = [
 describe("RoundService.getRoundsForApi", () => {
   beforeEach(() => {
     jest.resetModules();
+    // Re-assert the default config for every test. Without this, the
+    // `roundsMockMode: true` override installed by one test leaks into the
+    // ones that follow it and silently short-circuits the priority chain.
+    jest.doMock("../config", () => ({
+      __esModule: true,
+      default: {
+        app: { roundsMockMode: false },
+      },
+    }));
     mockGetActiveRound.mockReset();
     mockFindMany.mockReset();
     mockGetMockRounds.mockReset();
@@ -100,6 +109,7 @@ describe("RoundService.getRoundsForApi", () => {
     expect(result.source).toBe("mock");
     expect(result.rounds).toHaveLength(1);
     expect(result.rounds[0].id).toBe("mock-1");
+    expect(result.rounds[0].source).toBe("mock");
   });
 
   it("falls back to mock data when database throws", async () => {

@@ -184,6 +184,38 @@ export const circuitBreakerState = new Gauge({
    registers: [metricsRegistry],
 });
 
+/**
+ * Soroban RPC call latency histogram.
+ *
+ * Measures end-to-end duration (including retries and circuit-breaker
+ * overhead) for every Soroban contract call grouped by operation name.
+ *
+ * Buckets are chosen to cover the 15 s timeout range:
+ *   fast reads (< 1 s), moderate writes (1–5 s), slow/hanging (5–15 s+)
+ */
+export const sorobanRpcDurationSeconds = new Histogram({
+   name: 'soroban_rpc_duration_seconds',
+   help: 'Duration of Soroban RPC calls in seconds',
+   labelNames: ['operation'] as const,
+   buckets: [0.1, 0.25, 0.5, 1, 2.5, 5, 7.5, 10, 15],
+   registers: [metricsRegistry],
+});
+
+/**
+ * Total Soroban RPC calls labelled by operation name and outcome.
+ *
+ * outcome is one of:
+ *   success  — the call completed and the contract returned a value
+ *   failure  — the call failed (timeout, connection error, contract revert)
+ *   breaker_open — the circuit breaker was open, call was skipped
+ */
+export const sorobanRpcCallsTotal = new Counter({
+   name: 'soroban_rpc_calls_total',
+   help: 'Total number of Soroban RPC calls',
+   labelNames: ['operation', 'outcome'] as const,
+   registers: [metricsRegistry],
+});
+
 export const rateLimitHitsTotal = new Counter({
    name: 'rate_limit_hits_total',
    help: 'Total HTTP 429 responses from express-rate-limit handlers',

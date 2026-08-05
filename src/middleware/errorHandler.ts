@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import logger from '../utils/logger';
 
 /**
  * Centralized error handler middleware.
@@ -24,7 +25,9 @@ export function errorHandler(
       ...(err.details ? { details: err.details } : {}),
     });
   } catch (error) {
-    console.error('Error in error handler middleware:', error);
+    logger.error("Error in error handler middleware", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     res.status(500).json({
       error: 'InternalServerError',
       message: 'An unexpected error occurred.',

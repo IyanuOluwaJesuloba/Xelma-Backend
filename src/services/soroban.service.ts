@@ -1,10 +1,17 @@
 import { Keypair, Networks, Transaction } from "@stellar/stellar-sdk";
 import type { Client as XelmaClient, BetSide, OraclePayload, RoundMode, UserStats } from "@tevalabs/xelma-bindings";
+import config from "../config";
 import logger from "../utils/logger";
 import { toDecimal } from "../utils/decimal.util";
+import { stroopsToXlm } from "../utils/payout.util";
 import { withTimeout, TimeoutResult } from "../utils/timeout-wrapper";
 import { CircuitBreaker, CircuitBreakerOpenError } from "../utils/circuit-breaker";
 import { Decimal } from "@prisma/client/runtime/library";
+import { mapSorobanError } from "../utils/errors";
+import {
+  sorobanRpcCallsTotal,
+  sorobanRpcDurationSeconds,
+} from "../metrics/application.metrics";
 
 export interface SorobanHealth {
   initialized: boolean;
@@ -13,20 +20,20 @@ export interface SorobanHealth {
   rpcUrl: string;
   hasAdminKey: boolean;
   hasOracleKey: boolean;
+  failClosed: boolean;
 }
 
 /**
  * SorobanService handles interaction with the Stellar Soroban smart contracts.
- * 
- * FAILURE POLICY:
- * This service currently implements a "FAIL-OPEN" policy.
- * If the Soroban integration is not initialized or a contract call fails,
- * the system is designed to log a warning and proceed with database-only 
- * operations where possible, ensuring system availability at the cost 
- * of decentralized verification for those specific operations.
- * 
- * Rounds relying on DB-only fallback are marked with `isSoroban: false`.
- * 
+ *
+ * FAILURE POLICY (configurable via SOROBAN_FAIL_CLOSED):
+ * - Fail-open (default, demos/local): if Soroban is unavailable or a contract
+ *   call fails on money paths, callers may log a warning and continue with
+ *   database-only operations. Rounds using DB-only fallback are marked
+ *   `isSoroban: false`.
+ * - Fail-closed (recommended for production): money paths (bet/resolve) abort
+ *   when chain verification fails so silent skip of on-chain checks is impossible.
+ *
  * TIMEOUT POLICY:
  * All contract calls have bounded timeouts with automatic retry logic.
  * Slow or hanging upstream responses are aborted and retried.
@@ -51,16 +58,15 @@ export class SorobanService {
 
   private async init(): Promise<void> {
     try {
-      const contractId = process.env.SOROBAN_CONTRACT_ID;
-      const network = process.env.SOROBAN_NETWORK || "testnet";
-      const rpcUrl =
-        process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org";
-      const adminSecret = process.env.SOROBAN_ADMIN_SECRET;
-      const oracleSecret = process.env.SOROBAN_ORACLE_SECRET;
+      const contractId = config.soroban.contractId;
+      const network = config.soroban.network;
+      const rpcUrl = config.soroban.rpcUrl;
+      const adminSecret = config.soroban.adminSecret;
+      const oracleSecret = config.soroban.oracleSecret;
 
       if (!contractId) {
         logger.warn(
-          "SOROBAN_CONTRACT_ID not set. Soroban integration DISABLED.",
+          "SOROBAN_CONTRACT_ID (or alias CONTRACT_ID) not set. Soroban integration DISABLED.",
         );
         this.initialized = false;
         return;
@@ -98,11 +104,12 @@ export class SorobanService {
     await this.ready;
     return {
       initialized: this.initialized,
-      contractId: process.env.SOROBAN_CONTRACT_ID || null,
-      network: process.env.SOROBAN_NETWORK || "testnet",
-      rpcUrl: process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org",
+      contractId: config.soroban.contractId || null,
+      network: config.soroban.network,
+      rpcUrl: config.soroban.rpcUrl,
       hasAdminKey: !!this.adminKeypair,
       hasOracleKey: !!this.oracleKeypair,
+      failClosed: this.isFailClosed(),
     };
   }
 
@@ -111,6 +118,34 @@ export class SorobanService {
    */
   isReady(): boolean {
     return this.initialized;
+  }
+
+  /**
+   * True when money paths must abort if chain verification fails.
+   * Driven by SOROBAN_FAIL_CLOSED (default false = fail-open).
+   */
+  isFailClosed(): boolean {
+    return config.soroban.failClosed;
+  }
+
+  /**
+   * Apply the configured money-path failure policy after a Soroban call fails.
+   * Fail-closed: rethrows so the caller aborts bet/resolve (or related) work.
+   * Fail-open: logs a warning and returns so the caller may continue DB-only.
+   */
+  applyMoneyPathFailure(operation: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    if (this.isFailClosed()) {
+      logger.error(
+        `Soroban ${operation} failed (fail-closed); aborting money path`,
+        { error: message },
+      );
+      throw error instanceof Error ? error : new Error(message);
+    }
+    logger.warn(
+      `Soroban ${operation} failed (fail-open); proceeding without chain verification`,
+      { error: message },
+    );
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -125,6 +160,8 @@ export class SorobanService {
     operation: () => Promise<TimeoutResult<T>>,
     fallback?: T,
   ): Promise<TimeoutResult<T>> {
+    const startMs = Date.now();
+
     try {
       const result = await this.breaker.execute(async () => {
         const timeoutResult = await operation();
@@ -133,9 +170,19 @@ export class SorobanService {
         }
         return timeoutResult;
       });
+
+      const latencySeconds = (Date.now() - startMs) / 1000;
+      sorobanRpcDurationSeconds.observe({ operation: operationName }, latencySeconds);
+      sorobanRpcCallsTotal.inc({ operation: operationName, outcome: "success" });
+
       return result;
     } catch (error) {
+      const latencySeconds = (Date.now() - startMs) / 1000;
+      sorobanRpcDurationSeconds.observe({ operation: operationName }, latencySeconds);
+
       if (error instanceof CircuitBreakerOpenError) {
+        sorobanRpcCallsTotal.inc({ operation: operationName, outcome: "breaker_open" });
+
         logger.warn("Skipped Soroban call because circuit breaker is open", {
           operationName,
           breaker: error.breakerName,
@@ -151,6 +198,8 @@ export class SorobanService {
           timedOut: false,
         };
       }
+
+      sorobanRpcCallsTotal.inc({ operation: operationName, outcome: "failure" });
 
       if (error instanceof Error) {
         return {
@@ -215,7 +264,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Soroban round created successfully", {
@@ -274,7 +323,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Bet placed successfully on Soroban", {
@@ -332,7 +381,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Precision bet placed successfully on Soroban", {
@@ -389,7 +438,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Soroban round resolved successfully", {
@@ -464,7 +513,7 @@ export class SorobanService {
         timedOut: result.timedOut,
         durationMs: result.durationMs,
       });
-      throw new Error(`Soroban contract error: ${result.error?.message}`);
+      throw mapSorobanError(result.error?.message);
     }
 
     logger.info("Initial tokens minted successfully", {
@@ -583,13 +632,67 @@ export class SorobanService {
     return result.data!;
   }
 
+  /**
+   * Claims pending winnings on the Soroban contract and credits the user's balance.
+   * Returns the claimed amount in XLM (converted from stroops) plus optional tx hash.
+   *
+   * Uses timeout wrapper with retry logic. Signed by the admin keypair (backend relay).
+   */
+  async claimWinnings(
+    userAddress: string,
+  ): Promise<{ state: string; amount: number; txHash?: string }> {
+    await this.ensureInitialized();
+
+    const result = await this.callWithBreaker("sorobanClaimWinnings", () =>
+      withTimeout(
+        async () => {
+          logger.debug(`Initiating Soroban claimWinnings: user=${userAddress}`);
+
+          const tx = await this.client!.claim_winnings({ user: userAddress });
+          const res = await tx.signAndSend({
+            signTransaction: this.signWithAdmin.bind(this),
+          });
+
+          const claimedStroops = (res as any)?.result ?? tx.result ?? BigInt(0);
+          return {
+            state: "on-chain-success",
+            amount: stroopsToXlm(claimedStroops),
+            txHash: (res as any).hash,
+          };
+        },
+        {
+          timeoutMs: this.CALL_TIMEOUT_MS,
+          operationName: "sorobanClaimWinnings",
+          retries: this.MAX_RETRIES,
+        },
+      ),
+    );
+
+    if (!result.success) {
+      logger.error("Failed to claim winnings on Soroban after retries", {
+        error: result.error?.message,
+        timedOut: result.timedOut,
+        durationMs: result.durationMs,
+      });
+      throw mapSorobanError(result.error?.message);
+    }
+
+    logger.info("Winnings claimed successfully on Soroban", {
+      amount: result.data?.amount,
+      durationMs: result.durationMs,
+      retriesUsed: result.retriesUsed,
+    });
+
+    return result.data!;
+  }
+
   // ---------------------------------------------------------------------------
   // Internal signing helpers
   // ---------------------------------------------------------------------------
 
   private signWithAdmin(xdr: string): string {
     if (!this.adminKeypair) throw new Error("Admin keypair not set");
-    const network = process.env.SOROBAN_NETWORK || "testnet";
+    const network = config.soroban.network;
     const passphrase =
       network === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
     const tx = new Transaction(xdr, passphrase);
@@ -599,7 +702,7 @@ export class SorobanService {
 
   private signWithOracle(xdr: string): string {
     if (!this.oracleKeypair) throw new Error("Oracle keypair not set");
-    const network = process.env.SOROBAN_NETWORK || "testnet";
+    const network = config.soroban.network;
     const passphrase =
       network === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
     const tx = new Transaction(xdr, passphrase);

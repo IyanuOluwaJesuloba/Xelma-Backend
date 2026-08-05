@@ -65,9 +65,9 @@ async function checkSoroban(): Promise<{
     );
     const healthData = health.data;
     return {
-      status: healthData?.initialized ? 'healthy' : 'unavailable',
+      status: health.data?.initialized ? 'healthy' : 'unavailable',
       durationMs: Date.now() - start,
-      initialized: healthData?.initialized,
+      initialized: health.data?.initialized,
       error: health.error?.message,
     };
   } catch (err) {
@@ -181,7 +181,7 @@ router.get('/health', (_req: Request, res: Response) => {
 
   const overallStatus: 'ok' | 'degraded' = sorobanReady ? 'ok' : 'degraded';
 
-  res.json({
+  sendSuccess(res, {
     status: overallStatus,
     timestamp: Date.now(),
     services,

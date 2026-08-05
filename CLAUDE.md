@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Development
-npm run dev              # Start dev server with nodemon (auto-reload)
+npm run dev              # Start dev server with ts-node-dev (auto-reload)
 npm run build            # Compile TypeScript to dist/
 npm start                # Start production server (node dist/index.js)
 
@@ -15,6 +15,9 @@ npm run lint             # tsc --noEmit (type-check only, no output)
 
 # Testing
 npm test                 # Run all tests
+npm run test:unit        # Run unit tests only
+npm run test:unit:coverage # Unit tests with coverage report
+npm run test:integration # Run integration tests only
 npm run test:watch       # Run tests in watch mode
 
 # Run a single test file
@@ -51,11 +54,15 @@ npm run ci
 - **Soroban** — Smart contract interactions via `@tevalabs/xelma-bindings` and `@stellar/stellar-sdk`; controlled by `SOROBAN_ADMIN_SECRET` / `SOROBAN_ORACLE_SECRET`
 - **WebSocket** — Real-time events (round open/close/resolve, price ticks, notifications) broadcast via Socket.IO in [src/services/websocket.service.ts](src/services/websocket.service.ts)
 
-**Monetary precision:** All balance/amount fields use `Decimal(20, 8)` in Prisma. Never use native JS floats for financial math — use the utilities in [src/utils/decimal.ts](src/utils/decimal.ts).
+**Monetary precision:** All balance/amount fields use `Decimal(20, 8)` in Prisma. Never use native JS floats for financial math — use the utilities in [src/utils/decimal.util.ts](src/utils/decimal.util.ts).
 
 ## Testing
 
-Tests live in `src/tests/*.spec.ts`. Several tests are **excluded from the default test run** in [jest.config.ts](jest.config.ts) (`testPathIgnorePatterns`): `rounds.routes.spec.ts`, `predictions.routes.spec.ts`, `round.spec.ts`, `concurrent-rounds.spec.ts`, `education-tip.route.spec.ts`.
+Tests live in `src/tests/*.spec.ts`. Tests are split into **unit** and **integration** projects in [jest.config.ts](jest.config.ts):
+- **Unit tests** (`npm run test:unit`) — fast, no external dependencies
+- **Integration tests** (`npm run test:integration`) — require PostgreSQL
+
+The `integrationTestFiles` array in `jest.config.ts` defines which tests run as integration. Both projects run under `npm test`.
 
 Tests require a running PostgreSQL database. The test environment is configured in [.env.test](.env.test) and loaded by [jest.setup.js](jest.setup.js). The CI pipeline uses a PostgreSQL 16 service container.
 
